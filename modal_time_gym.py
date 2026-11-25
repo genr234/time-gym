@@ -36,13 +36,13 @@ def check_image():
         print(f"CPU_JOB check_image 2vCPU 4GiB {monotonic() - start:.1f}s", flush=True)
 
 
-def inference(adapter_enabled, memory_fraction=0.86):
+def inference(adapter_enabled, memory_fraction=0.86, context=8192):
     from vllm import LLM, SamplingParams
     from vllm.sampling_params import StructuredOutputsParams
     from time_gym.qwen_eval import MODEL, REVISION, action_schema
 
     engine = LLM(model=MODEL, revision=REVISION, language_model_only=True, dtype="bfloat16",
-                 max_model_len=8192, gpu_memory_utilization=memory_fraction, enforce_eager=True,
+                 max_model_len=context, gpu_memory_utilization=memory_fraction, enforce_eager=True,
                  enable_lora=adapter_enabled)
     tokenizer = engine.get_tokenizer()
     schemas = {eta: action_schema(eta=eta) for eta in (True, False)}
@@ -66,7 +66,7 @@ def baseline(adapter: str = "", split: str = "dev", policy: str = "base"):
 
     start = monotonic()
     try:
-        sample = inference(bool(adapter))
+        sample = inference(bool(adapter), context=32768 if split == "held-out" else 8192)
         lora = LoRARequest(policy, 1, adapter) if adapter else None
         return evaluate(lambda chats, seeds: [r.outputs[0].text for r in sample(chats, seeds, lora)],
                         split=split, policy=policy)
