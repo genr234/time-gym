@@ -67,10 +67,22 @@ After approval for a specific spend, the Inkling 2 Mini runner requires `--polic
 
 ## Qwen on Modal
 
-The Qwen3.5-4B baseline stopped before evaluation. The Modal image builder could not find `python` when it tried to install Gymnasium in the vLLM image. The app stopped with no active tasks. The result does not show whether the model can use the tools. We did not switch to Qwen3-8B, start SFT or GRPO, or run held-out model evaluation.
+The Qwen3.5-4B development baseline completed 48 episodes: three families, two case seeds, two sample seeds, and four tasks per case and sample. The model read sources and saved verified findings, but more time did not improve mean report value. The run used vLLM 0.19.0 with thinking off. No SFT, GRPO, or held-out model evaluation ran.
 
-| Job | GPU × GPU wall time | Estimated GPU spend | Result |
+| Policy | 15 min value | 30 min value | 60 min value | Budget efficiency | 60-min value as share of oracle |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Qwen3.5-4B base | −0.17 | −1.67 | −1.75 | −0.18 | −13.1% |
+| Matched fair reference | 1.83 | 4.17 | 10.50 | 1.00 | 78.8% |
+| Matched oracle | 2.67 | 6.67 | 13.33 | 1.23 | 100% |
+
+Eleven of 12 ETA episodes did not complete the scope. The one completion missed its ETA, had a 5-minute interval and 5 minutes of waste, and took 5 minutes longer than the fair lookup. Coverage is 0 of 1 among completed runs. The mean width across all 12 forecasts was 4.67 minutes.
+
+Across all 48 traces, 44 episodes had an invalid action, 18 overran, 17 saved an unsupported claim, and 3 returned output that could not be parsed. These categories can overlap. The most common invalid actions were 409 rejected ETA calls (including calls in budget tasks or after an ETA was set), 142 rejected saves with invalid finding fields or citations, and 7 attempts to read a gated source before its link was open. No episode hit the request limit. The base model can use the tools, so there is no need to switch to Qwen3-8B.
+
+| Job | Resource × measured function time | Estimated compute spend | Result |
 | --- | --- | ---: | --- |
-| [Qwen3.5-4B development baseline](https://modal.com/apps/genr234/main/ap-uOoo8Hy6OCQHHwp254KNPF) | Planned L40S × 0 s | $0.00 | CPU image build failed before a GPU started |
+| [First baseline attempt](https://modal.com/apps/genr234/main/ap-uOoo8Hy6OCQHHwp254KNPF) | Planned L40S × 0 s | $0.00 GPU | CPU image build failed before a GPU started |
+| [CPU image check](https://modal.com/apps/genr234/main/ap-eCKFxCuxzChcGNC2UGnWFt) | 2 vCPU and 4 GiB × 10.6 s | $0.00023 CPU and RAM | Imported both packages and found Qwen3.5 in the vLLM registry |
+| [Development baseline](https://modal.com/apps/genr234/main/ap-SXTqXR4ap6WI4TecjO5Ch9) | L40S × 423.5 s | $0.23 GPU | 48 episodes complete |
 
-The phase GPU cap is $25. The baseline is configured for one L40S, a 360-second startup limit, and a 1,500-second run limit. At $0.000542 per GPU second, that is about $1.01 for both limits combined. Image-build costs are not part of this GPU estimate. If work resumes, use the vLLM image’s interpreter explicitly and check the image on CPU before allocating a GPU.
+Estimates use [Modal list prices](https://modal.com/pricing) and measured function time. They exclude container startup outside the function, CPU image builds, and other billing overhead. The full GPU client run took 441.8 seconds, or at most $0.24 if that entire time were charged at the L40S rate. The phase GPU cap is $25. The baseline uses one L40S, a 360-second startup limit, and a 1,500-second run limit, or about $1.01 at the L40S rate for both limits combined.

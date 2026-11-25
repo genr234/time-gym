@@ -9,14 +9,31 @@ import modal
 app = modal.App("time-gym-qwen")
 cache = modal.Volume.from_name("time-gym-qwen-weights", create_if_missing=True)
 eval_image = (
-    modal.Image.from_registry("vllm/vllm-openai:v0.19.0", add_python=None)
+    modal.Image.from_registry("nvidia/cuda:12.8.0-devel-ubuntu22.04", add_python="3.12")
     .entrypoint([])
-    .pip_install("gymnasium>=1.0,<2")
+    .uv_pip_install("vllm==0.19.0", "gymnasium>=1.0,<2")
     .env({"HF_HOME": "/cache", "HF_HUB_DISABLE_XET": "1", "VLLM_WORKER_MULTIPROC_METHOD": "spawn"})
     .add_local_python_source("time_gym")
 )
 GPU = "L40S"
 EVAL_TIMEOUT = 1500
+
+
+@app.function(image=eval_image, cpu=2, memory=4096, timeout=120, startup_timeout=120, scaledown_window=2)
+def check_image():
+    start = monotonic()
+    try:
+        import time_gym
+        import torch
+        import vllm
+        from vllm import ModelRegistry
+
+        assert not torch.cuda.is_available(), "The preflight must run without a GPU"
+        arch = "Qwen3_5ForConditionalGeneration"
+        assert arch in ModelRegistry.get_supported_archs(), f"Missing model registration: {arch}"
+        print(f"vLLM {vllm.__version__}; registered {arch}; imported {time_gym.__name__}", flush=True)
+    finally:
+        print(f"CPU_JOB check_image 2vCPU 4GiB {monotonic() - start:.1f}s", flush=True)
 
 
 @app.function(image=eval_image, gpu=GPU, cpu=4, memory=16384, timeout=EVAL_TIMEOUT, startup_timeout=360,
