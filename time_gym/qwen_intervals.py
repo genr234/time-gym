@@ -10,7 +10,7 @@ from time_gym.qwen_eval import DEV_EVAL_SEEDS, SAMPLE_SEEDS
 from time_gym.report_baseline import matrix
 
 
-def paired_intervals(before, after, fair, oracle, *, draws=20_000, seed=41):
+def paired_intervals(before, after, fair, oracle, *, draws=20_000, seed=41, include_traces=False):
     def values(rows):
         result = {}
         for row in rows:
@@ -28,6 +28,17 @@ def paired_intervals(before, after, fair, oracle, *, draws=20_000, seed=41):
     if not cases or any(v.keys() != expected for v in (a, b, f, o)):
         raise ValueError("Need the same complete case, sample, and budget pairs for all policies.")
 
+    if include_traces:
+        def trace_rows(rows):
+            keyed = {(r["family"], r["seed"], r["sample_seed"], r["budget"]): r for r in rows}
+            full = expected | {(*case, sample, budget) for case in cases for sample in SAMPLE_SEEDS
+                               for budget in (30, None)}
+            if keyed.keys() != full or len(keyed) != len(rows):
+                raise ValueError("Need complete paired traces at all budgets and ETA.")
+            return keyed
+
+        traces = list(map(trace_rows, (before, after)))
+
     def case_values(case):
         k15 = [(*case, sample, 15) for sample in SAMPLE_SEEDS]
         k60 = [(*case, sample, 60) for sample in SAMPLE_SEEDS]
@@ -35,7 +46,17 @@ def paired_intervals(before, after, fair, oracle, *, draws=20_000, seed=41):
         delta60 = np.mean([b[k] - a[k] for k in k60])
         fair_gain = np.mean([f[y] - f[x] for x, y in zip(k15, k60)])
         oracle_value = np.mean([o[k] for k in k60])
-        return delta60, delta60 - delta15, fair_gain, oracle_value
+        budget = (delta60, delta60 - delta15, fair_gain, oracle_value)
+        if not include_traces:
+            return budget
+
+        def task_values(rows):
+            eta = [rows[(*case, sample, None)] for sample in SAMPLE_SEEDS]
+            reread = [rows[(*case, sample, b)]["reread_minutes"] for sample in SAMPLE_SEEDS for b in (15, 30, 60, None)]
+            return (100 * np.mean([r["eta_actual"] is not None for r in eta]),
+                    100 * np.mean([r["eta_covered"] is True for r in eta]), np.mean(reread))
+
+        return (*budget, *(b - a for a, b in zip(*map(task_values, traces), strict=True)))
 
     data = np.array([case_values(case) for case in cases])
     rng = np.random.default_rng(seed)
@@ -44,20 +65,23 @@ def paired_intervals(before, after, fair, oracle, *, draws=20_000, seed=41):
     sample = np.concatenate([rng.choice(indices, size=(draws, len(indices)), replace=True) for indices in strata], axis=1)
 
     def metrics(totals):
-        value, gain, fair_gain, oracle_value = totals.T
+        value, gain, fair_gain, oracle_value, *trace_metrics = totals.T
         if np.any(fair_gain <= 0) or np.any(oracle_value <= 0):
             raise ValueError("Bootstrap requires positive fair gain and oracle value.")
-        return np.array([value, gain / fair_gain, 100 * value / oracle_value]).T
+        return np.array([value, gain / fair_gain, 100 * value / oracle_value, *trace_metrics]).T
 
     point = metrics(data.mean(axis=0))
     low, high = np.quantile(metrics(data[sample].mean(axis=1)), [0.025, 0.975], axis=0)
     names = ("value60", "efficiency", "oracle_share_pp")
+    if include_traces:
+        names += ("eta_completion_pp", "eta_coverage_all_pp", "reread_minutes_per_episode")
     return dict(zip(names, zip(point.tolist(), low.tolist(), high.tolist())))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("split", choices=("dev", "held-out"))
+    parser.add_argument("--include-traces", action="store_true", help="Include ETA and re-read intervals.")
     parser.add_argument("traces", nargs="+", type=Path, help="Base, SFT, and optionally GRPO JSONL, in that order.")
     args = parser.parse_args()
     seeds = DEV_EVAL_SEEDS if args.split == "dev" else None
@@ -71,7 +95,8 @@ def main():
     ):
         parser.error("Use matching base, SFT, and optionally GRPO traces.")
     for i in range(1, len(models)):
-        print(f"{labels[i]} − {labels[i-1]}: {paired_intervals(models[i-1], models[i], fair, oracle)}")
+        results = paired_intervals(models[i-1], models[i], fair, oracle, include_traces=args.include_traces)
+        print(f"{labels[i]} − {labels[i-1]}: {results}")
 
 
 if __name__ == "__main__":

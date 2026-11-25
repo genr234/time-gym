@@ -1,6 +1,7 @@
 """Shared chat protocol and batched Time Gym evaluation for Qwen."""
 
 import json
+import re
 
 from time_gym import request_cap
 from time_gym.cases import BUDGETS, matrix_cases
@@ -10,6 +11,8 @@ MODEL = "Qwen/Qwen3.5-4B"
 REVISION = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
 SAMPLE_SEEDS = (41, 42)
 DEV_EVAL_SEEDS = (0, 1, 2, 3)
+PROGRESS_EVAL_SEEDS = (12, 13, 14, 15)
+THINKING_TEMPERATURE = 0.6
 PROMPT = (
     "Reply with exactly one JSON action object per turn. Read the tool result before your next action. "
     "Read costs are hidden within their listed ranges. Failed reads still cost time. "
@@ -20,7 +23,7 @@ PROMPT = (
 )
 
 
-def initial_chat(episode):
+def initial_chat(episode, *, thinking=False):
     brief = episode.brief()
     if episode.budget is None:
         task = ("ETA task: call estimate exactly once, first. Give an 80% interval for your own time to verify "
@@ -38,7 +41,10 @@ def initial_chat(episode):
         '{"tool":"finish","args":{}}',
     ])
     user = task + "\n\nAllowed actions (examples only; use actual catalog IDs and read values):\n" + "\n".join(examples)
-    return [{"role": "system", "content": PROMPT}, {"role": "user", "content": user + "\n\nCatalog:\n" + json.dumps(brief)}]
+    system = PROMPT
+    if thinking:
+        system += " Keep deliberation to at most two short sentences. Output one action and stop. Wait for the next tool result."
+    return [{"role": "system", "content": system}, {"role": "user", "content": user + "\n\nCatalog:\n" + json.dumps(brief)}]
 
 
 def action_schema(*, eta):
@@ -56,10 +62,17 @@ def action_schema(*, eta):
     return {"anyOf": [obj(tool={"const": name}, args=args) for name, args in actions.items()]}
 
 
-def act(episode, chat, output):
+def act(episode, chat, output, *, thinking=False):
     chat.append({"role": "assistant", "content": output})
     try:
-        action = json.loads(output)
+        text = output.strip()
+        if thinking:
+            if "</think>" in text:
+                text = text.split("</think>", 1)[1].strip()
+            fence = re.fullmatch(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL | re.IGNORECASE)
+            if fence:
+                text = fence[1]
+        action = json.loads(text)
         tool, args = action["tool"], action["args"]
         if not isinstance(tool, str) or not isinstance(args, dict):
             raise ValueError("Invalid action fields")
@@ -72,21 +85,33 @@ def act(episode, chat, output):
         episode.outcome = "request_limit"
 
 
-def evaluate(sample, split="dev", policy="base"):
+def _with_progress(episode, chat):
+    if not episode.seen:
+        return chat
+    # Keep only the latest summary in the prompt. The stored chat stays unchanged.
+    records = [f"{s['id']}: {s['status']}" + (f"; opens {s['opens']}" if s.get("opens") else "")
+               for s in episode.seen.values()]
+    return [*chat[:-1], {**chat[-1], "content": chat[-1]["content"] +
+                        "\n\nSearch progress (records already read):\n" + "\n".join(records)}]
+
+
+def evaluate(sample, split="dev", policy="base", *, seeds=None, progress=False, thinking=False):
     """Sample one action per active episode per round. Keep raw tool traces."""
-    seeds = DEV_EVAL_SEEDS if split == "dev" else None
+    if split == "dev" and seeds is None:
+        seeds = DEV_EVAL_SEEDS
     runs = []
     for case in matrix_cases(split, seeds):
         for budget in (*BUDGETS, None):
             for seed in SAMPLE_SEEDS:
                 episode = ReportEpisode(case, budget)
-                runs.append((episode, initial_chat(episode), seed))
+                runs.append((episode, initial_chat(episode, thinking=thinking), seed))
     pending = runs
     turn = 0
     while pending:
-        outputs = sample([chat for _, chat, _ in pending], [seed * 1000 + turn for _, _, seed in pending])
+        outputs = sample([_with_progress(episode, chat) if progress else chat for episode, chat, _ in pending],
+                         [seed * 1000 + turn for _, _, seed in pending])
         for (episode, chat, _), output in zip(pending, outputs, strict=True):
-            act(episode, chat, output)
+            act(episode, chat, output, thinking=thinking)
         pending = [(e, h, s) for e, h, s in pending if not e.outcome]
         turn += 1
     return [{"policy": policy, "sample_seed": seed, **episode.metrics(), "draft": episode.draft,

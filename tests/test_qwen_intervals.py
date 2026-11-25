@@ -21,3 +21,18 @@ class QwenIntervalTests(unittest.TestCase):
         self.assertEqual(result["oracle_share_pp"][1:], (-2.0, 30.0))
         with self.assertRaisesRegex(ValueError, "complete case"):
             paired_intervals(base, sft[:-1], fair, oracle)
+
+    def test_eta_coverage_counts_incomplete_tasks_and_rereads_cover_all_budgets(self):
+        def rows(tuned):
+            return [{"family": "chain", "seed": 0, "sample_seed": sample, "budget": budget,
+                     "value": 1 if budget == 60 else 0,
+                     "eta_actual": 39 if budget is None and (sample == 41 or tuned) else None,
+                     "eta_covered": tuned and budget is None and sample == 42,
+                     "reread_minutes": 12 if tuned and budget == 30 and sample == 42 else 0}
+                    for sample in (41, 42) for budget in (15, 30, 60, None)]
+
+        base, sft = rows(False), rows(True)
+        result = paired_intervals(base, sft, base, base, draws=10, include_traces=True)
+        self.assertEqual(result["eta_completion_pp"], (50, 50, 50))
+        self.assertEqual(result["eta_coverage_all_pp"], (50, 50, 50))
+        self.assertEqual(result["reread_minutes_per_episode"], (1.5, 1.5, 1.5))

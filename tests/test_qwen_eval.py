@@ -3,13 +3,30 @@ from types import SimpleNamespace
 import unittest
 
 from time_gym.cases import generate
-from time_gym.qwen_eval import action_schema, evaluate, initial_chat
+from time_gym.policies import run_policy
+from time_gym.qwen_eval import PROGRESS_EVAL_SEEDS, act, action_schema, evaluate, initial_chat
 from time_gym.qwen_grpo import advantages, rollout_group, training_tasks
 from time_gym.qwen_sft import fair_examples
 from time_gym.report import ReportEpisode
 
 
 class QwenEvaluationTests(unittest.TestCase):
+    def test_thinking_parses_one_action_and_preserves_raw_output(self):
+        action = '{"tool":"finish","args":{}}'
+        for text, outcome in (
+            (f'consider {{}}\n</think>\n```json\n{action}\n```', "finished"),
+            (f'<think>done</think>{action}', "finished"),
+            (action, "finished"),
+            (f'<think>not closed {action}', "unparseable_output"),
+            (f'done</think>{action} {{}}', "unparseable_output"),
+        ):
+            with self.subTest(text=text):
+                episode = ReportEpisode(generate("chain", 0), 15)
+                chat = initial_chat(episode)
+                act(episode, chat, text, thinking=True)
+                self.assertEqual(episode.outcome, outcome)
+                self.assertEqual(chat[2]["content"], text)
+
     def test_grpo_groups_use_training_cases_and_terminal_rewards(self):
         tasks = training_tasks()
         self.assertEqual({(case.split, case.seed) for case, _ in tasks}, {("dev", s) for s in range(4, 12)})
@@ -27,6 +44,19 @@ class QwenEvaluationTests(unittest.TestCase):
         self.assertEqual([r["outcome"] for r, _ in group], ["finished", "finished"])
         self.assertEqual(advantages([r["reward"] for r, _ in group]), [0, 0])
         self.assertGreater(advantages([-0.2, 0.0, 0.1])[-1], 0)
+
+    def test_thinking_training_sees_detours_but_not_evaluation_cases(self):
+        tasks = training_tasks(thinking=True)
+        self.assertEqual({(c.split, c.family, c.seed) for c, _ in tasks},
+                         {("dev", f, s) for f in ("corroborate", "conflict", "chain", "detour") for s in range(20, 80)})
+        episode = ReportEpisode(generate("detour", 23))
+        run_policy(episode, "fair")
+        self.assertTrue(episode.scope_complete)
+        self.assertTrue(any(a.get("source", {}).get("status") in {"archived", "failed"}
+                            for a in episode.actions))
+        examples = list(fair_examples(thinking=True))
+        self.assertTrue(2000 <= len(examples) <= 3000)
+        self.assertTrue(any(" archived" in note and " opens " in note for _, note in examples))
 
     def test_action_schema_pairs_each_allowed_tool_with_its_arguments(self):
         for eta in (False, True):
@@ -87,6 +117,36 @@ class QwenEvaluationTests(unittest.TestCase):
         self.assertEqual({(r["family"], r["seed"]) for r in rows}, {("branch", seed) for seed in range(100, 112)})
         self.assertEqual({(r["budget"], r["sample_seed"]) for r in rows},
                          {(budget, seed) for budget in (15, 30, 60, None) for seed in (41, 42)})
+
+    def test_progress_reports_only_observed_reads_and_does_not_change_the_episode(self):
+        target = initial_chat(ReportEpisode(generate("chain", 12), 60))
+
+        def run(progress):
+            prompts = []
+
+            def sample(chats, seeds):
+                turn = len(prompts)
+                index = chats.index(target) if turn == 0 else 0
+                prompts.append([m["content"] for m in chats[index]])
+                tool = '{"tool":"finish","args":{}}'
+                outputs = [tool] * len(chats)
+                if turn < 2:
+                    source_id = ("12-13", "12-67")[turn]
+                    outputs[index] = json.dumps({"tool": "read_source", "args": {"source_id": source_id}})
+                return outputs
+
+            rows = evaluate(sample, seeds=PROGRESS_EVAL_SEEDS, progress=progress)
+            return rows, prompts
+
+        control, plain = run(False)
+        treatment, summary = run(True)
+        self.assertEqual(control, treatment)
+        self.assertEqual(len(treatment), 96)
+        self.assertEqual({(r["split"], r["seed"]) for r in treatment}, {("dev", s) for s in range(12, 16)})
+        self.assertEqual(summary[:2], plain[:2])  # A rejected gated read adds no progress.
+        self.assertEqual(summary[2][:-1], plain[2][:-1])
+        self.assertEqual(summary[2][-1], plain[2][-1] +
+                         "\n\nSearch progress (records already read):\n12-67: archived; opens 12-13")
 
     def test_sft_uses_same_chat_and_feedback_as_evaluation(self):
         examples = iter(fair_examples())
