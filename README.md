@@ -224,3 +224,51 @@ Frozen weights: Qwen revision `851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a`; SFT ad
 ETA width and waste means use completed tasks only. Other columns are totals; ETA waste is observed only on completed tasks. There were no parse failures. Base, SFT, and GRPO had 50, 14, and 15 overruns, and 359, 605, and 543 invalid actions. The tuned models completed more ETA tasks but did not convert extra budget into more value on this family. The high re-read totals show repeated work, not evidence that the models learned to exploit the reward.
 
 The completed held-out runs used three L40S jobs: [base](https://modal.com/apps/genr234/main/ap-IyBNI4vyS98P8312uQdB8f) × 457.4 s, [SFT](https://modal.com/apps/genr234/main/ap-VCco6bGjxANGa9bjNKpQ6H) × 769.9 s, and [GRPO](https://modal.com/apps/genr234/main/ap-ga5pK0vw12JXXyWMYqk3Re) × 858.8 s, or $1.13 combined. Total GPU spend for the phase was about **$6.88**, including failed and stopped jobs, at list rates and excluding startup. No job exceeded $8.
+
+### Failure audit and progress-summary test
+
+In the saved held-out runs, SFT and GRPO spent 1,135 and 1,461 simulated minutes on re-reads in ETA tasks, compared with 207 and 245 in budget tasks. Across both tasks, 777 and 924 of those minutes were spent on records already known to be archived. Attempts to read a gated record before opening its link accounted for 545 of 605 SFT invalid actions and 493 of 543 GRPO invalid actions. This shows a failure to track search progress, mainly in ETA tasks. It does not explain all of the budget gap.
+
+We tested the same SFT adapter with and without a short progress summary. The comparison uses development seeds 12–15 in all three development families: 96 matched episodes per condition. Both conditions use the same budgets, decoding, sampling settings, and 32,768-token context. Only the last tool result in the prompt gets the summary. It lists observed record IDs, status, and links. The simulator and raw tool traces do not change. With approved Modal spend, run:
+
+```sh
+uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py::main --progress-study --output qwen-progress-dev.jsonl
+```
+
+| Condition | 60-min value | Budget efficiency | 60-min oracle share | ETA complete | Gated read errors | Re-read minutes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| SFT, no summary | 8.75 | 0.62 | 54.4% | 15/24 | 0 | 0 |
+| SFT with summary | 7.08 | 0.44 | 44.0% | 11/24 | 0 | 0 |
+
+The control made no gated read errors and did not re-read records. Thus, this test could not show whether the summary prevents the held-out failure. All three paired 95% budget intervals include zero; the difference in oracle share was −10.4 percentage points [−28.7, +7.3]. Do not enable the summary by default. Before another paid test, make development cases that require recovery after an archived path. Keep the old held-out family frozen and use a fresh held-out family for any new transfer claim.
+
+The [Modal job](https://modal.com/apps/genr234/main/ap-Xb48KGHKwpmrlW9b9Hm0dG) ran both conditions on one L40S for 497.7 seconds, or about $0.27 in GPU spend before startup. The full GPU estimate, including startup and run time limits, was below the approved $1.01 limit.
+
+### Thinking-enabled training round
+
+This round uses Qwen's native thinking template, a 1,024-token limit per action, and no guided decoding. The parser accepts one JSON action after the thinking block and counts invalid JSON as a parse failure. The SFT teacher generates 2,036 turns on seeds 20–79 across four development families. The new `detour` family has two-stage paths with failed or archived records. It does not change the original development evaluation or the frozen `branch` family.
+
+The first [SFT attempt](https://modal.com/apps/genr234/main/ap-iqxHrnAM3cA7xKLEpbImRC) used H100 × about 128 billed seconds ($0.14). We stopped it at step 3 because the fallback kernels took about 21 seconds per step. It saved no adapter. The replacement uses pinned fast kernels. We use Modal's resource billing report and reserve the full timeout cost for active jobs before starting another job.
+
+| Development run | 60-min value | Efficiency | Oracle share | ETA complete / covered | Parse failures | Re-read / ETA waste min |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Base, original prompt and temperature 1.0 | −0.21 | −0.02 | −1.5% | 0/24 / 0/24 | 86/96 | 0 / 0 |
+| Base, short prompt and temperature 0.6 | 0.50 | 0.05 | 3.7% | 0/24 / 0/24 | 79/96 | 0 / 0 |
+| SFT-v2, same evaluation settings as retry | 9.67 | 0.81 | 70.7% | 24/24 / 16/24 | 0/96 | 0 / 0 |
+
+The [first base run](https://modal.com/apps/genr234/main/ap-drFXCX6Ciixosb0NHSEQ0f) used L40S × 620.4 s ($0.34 billed). Of its 86 failed episodes, 68 did not close the thinking block and 18 returned malformed or multiple actions after it. The [retry](https://modal.com/apps/genr234/main/ap-y2PQzHWZ5FThFh7uMkituD) requested short deliberation and one action at temperature 0.6, keeping the 1,024-token limit and no guided decoding. It used L40S × 574.9 s ($0.32 billed). In the retry, 52 episodes failed without a closed thinking block and 27 failed with invalid output after one. This is a protocol failure, not evidence of poor time decisions. Both base runs exceeded the 20% parse-failure gate. GRPO and held-out evaluation did not run.
+
+The [completed SFT job](https://modal.com/apps/genr234/main/ap-J2vq1mrHn9XlDEMZGYicOX) trained all linear layers with rank 16 and alpha 32. It used 510 updates over two full epochs, an effective batch of eight, and cosine decay from 2e-4. It saved `/cache/time-gym-sft-v2`. The job used H100 × 1,918.8 s ($2.12 billed). This adapter trained with the original system prompt, before we added the short-deliberation instruction. Its development evaluation uses the same revised prompt and decoding as the base retry.
+
+The [SFT evaluation](https://modal.com/apps/genr234/main/ap-ieAGOduusHpclQiExYkOdz) used `/cache/time-gym-sft-v2-text`. The export kept all 496 text tensors unchanged and removed 196 unused vision tensors after checking their LoRA B matrices were zero. The job used L40S × 339.3 function seconds ($0.17 billed). Two setup attempts used about 4 and 164 L40S billed seconds ($0.09 combined): the first could not import the SFT module, and the second could not load vision tensors into the text-only engine. Total project GPU spend was **$10.46** in Modal's billing report. No job reached $8.
+
+| SFT-v2 minus base retry | Difference [paired 95% interval] |
+| --- | ---: |
+| 60-minute report value | +9.17 [7.58, 10.67] |
+| Budget efficiency | +0.76 [0.58, 0.94] |
+| 60-minute oracle share (percentage points) | +67.1 [55.6, 77.9] |
+| ETA completion (percentage points) | +100.0 [100.0, 100.0] |
+| ETA coverage across all ETA episodes (percentage points) | +66.7 [66.7, 66.7] |
+| Re-read minutes per episode | 0 [0, 0] |
+
+On the matched development run, SFT-v2 reduced unsupported findings from 5 to 0 and unused useful minutes from 1,358 to 20. The zero-width intervals describe the observed cases, not certainty about new cases. SFT improved end-to-end performance, but the base parse failures prevent us from separating protocol skill from time skill. Fix the base protocol on development cases before spending on GRPO. There are no new held-out results or transfer claims.
