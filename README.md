@@ -64,3 +64,13 @@ The reset observation gives instructions and the catalog. Actions are JSON text 
 After approval for a specific spend, the Inkling 2 Mini runner requires `--policy inkling`, `--allow-paid`, and `OPENROUTER_API_KEY`. Use `--reasoning on` or `off`, and `--samples` and `--sample-seed` for repeats. A budget episode allows 17, 32, or 62 requests at 15, 30, or 60 minutes. The ETA default is 120. These are request limits, not price limits. An API error, request limit, plain-text response, or output that cannot be parsed gets its own row. Later episodes still run. Provider support for the seed and reasoning settings is not verified live.
 
 **Claim boundary:** Tool actions use simulated minutes; model inference uses none. These results check the scorer and controls on fictional tasks. They do not show that a model can use a real hour well or improve with training. Next, measure an untuned model on development cases. Test a prompt change if it shows a repeatable weakness. Keep held-out cases out of those decisions and test real-clock behavior separately.
+
+## Qwen on Modal
+
+The Qwen3.5-4B baseline stopped before evaluation. The Modal image builder could not find `python` when it tried to install Gymnasium in the vLLM image. The app stopped with no active tasks. The result does not show whether the model can use the tools. We did not switch to Qwen3-8B, start SFT or GRPO, or run held-out model evaluation.
+
+| Job | GPU × GPU wall time | Estimated GPU spend | Result |
+| --- | --- | ---: | --- |
+| [Qwen3.5-4B development baseline](https://modal.com/apps/genr234/main/ap-uOoo8Hy6OCQHHwp254KNPF) | Planned L40S × 0 s | $0.00 | CPU image build failed before a GPU started |
+
+The phase GPU cap is $25. The baseline is configured for one L40S, a 360-second startup limit, and a 1,500-second run limit. At $0.000542 per GPU second, that is about $1.01 for both limits combined. Image-build costs are not part of this GPU estimate. If work resumes, use the vLLM image’s interpreter explicitly and check the image on CPU before allocating a GPU.
