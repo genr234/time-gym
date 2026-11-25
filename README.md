@@ -106,7 +106,7 @@ The prior run gave a conservative estimate of $0.46 for twice as many episodes. 
 
 ### Constrained decoding and SFT
 
-The Qwen comparison uses vLLM 0.19.0 structured output for both the base model and adapters. Each response must be one JSON action object with the fields for that tool. Budget tasks cannot call `estimate`. This controls for bracket and trailing-text errors in the time comparison. The decoder does not choose which sources to read, check citations, reserve time for a save, or prevent an overrun. The prompt and sampling settings did not change from the prompt-only run.
+The Qwen comparison uses vLLM 0.19.0 structured output for both the base model and adapters. Each response must be one JSON action object with the fields for that tool. Budget tasks cannot call `estimate`. This controls for bracket and trailing-text errors in the time comparison. The final schema leaves the citation count to the simulator, along with citation validity and read overruns. The prompt and sampling settings did not change from the prompt-only run.
 
 The supervised fine-tuning (SFT) job uses a rank-8 LoRA and 240 TRL optimizer steps. Its teacher is the fair policy. The training cases use development seeds 4–11. The model comparison uses seeds 0–3. Held-out cases are not used in either step. Training applies loss only to the assistant's next action and end token in the evaluation chat format.
 
@@ -124,8 +124,38 @@ The [first SFT launch](https://modal.com/apps/genr234/main/ap-prqcCxQoeld37NFaI4
 | --- | ---: | ---: | ---: | ---: |
 | Original base, seeds 0–1 | −0.17 / −1.67 / −1.75 | −0.18 | −13.1% | 1/12 |
 | Prompt-only base, seeds 0–3 | 0.00 / 0.63 / −0.63 | −0.07 | −4.6% | 0/24 |
-| Constrained base, seeds 0–3 | −4.42 / −7.50 / −12.79 | −0.88 | −93.6% | 6/24 |
+| Citation-count-constrained base, seeds 0–3 | −4.42 / −7.50 / −12.79 | −0.88 | −93.6% | 6/24 |
+| Syntax-only base, seeds 0–3 | −0.71 / 0.54 / 0.00 | 0.07 | 0.0% | 6/24 |
+| Syntax-only SFT, seeds 0–3 | 1.96 / 3.00 / 7.42 | 0.57 | 54.3% | 19/24 |
 
 The constrained base produced 839 schema-valid actions and four incomplete 60-minute save actions. Unparseable episodes fell from 61 to 4. But episodes with unsupported claims rose from 12 to 69, and overruns rose from 23 to 33 (15 at the 15-minute budget). All 20 remaining invalid actions tried to read a gated source before its link was open. With zero invalid actions, mean values were −5.05 / −9.00 / −16.70, efficiency was −1.19 (20 matched pairs), and oracle share was −122.3%. Of six completed ETA tasks, two finished inside the forecast. Mean interval width and waste on those six tasks were 21.67 and 1.33 minutes.
 
 The [constrained baseline](https://modal.com/apps/genr234/main/ap-Xm3wE16Y3NnLbjEka1dfk8) used one L40S for 384.3 seconds, or about $0.21. Estimated total GPU spend through this run, including the stopped SFT launch, was $0.59, excluding startup.
+
+The first schema required two or three citations. That rule changed which errors could reach the simulator. The prompt-only run had 44 one-ID findings in rejected saves across 21 episodes. In 19 matched episodes, both runs took the same actions up to a save, then the first constrained run kept the topic, value, and first citation but added an unread citation. For example, one run changed `["05-41"]` to `["05-41", "05-48", "05-31"]`. The simulator rejected the first save but accepted and penalized the second. The trace audit counts each unsupported finding once, at the first failed check: unread source, failed or archived source, wrong topic, missing stage, wrong link, then wrong value. Counts across all accepted saves can include the same finding in several drafts.
+
+| Unsupported cause in the first constrained run | Final drafts | All accepted saves |
+| --- | ---: | ---: |
+| Cites an unread source | 151 | 530 |
+| Cites a failed or archived source | 5 | 9 |
+| Stage missing | 46 | 51 |
+| Value wrong after the evidence checks | 0 | 0 |
+| Wrong topic or link | 0 | 0 |
+| Total | 202 | 590 |
+
+With the citation-count rule removed, all 834 actions matched the schema. No accepted save cited an unread source. The final drafts had 73 unsupported findings: 70 missing a stage and three citing a failed or archived record. The simulator rejected 120 saves for bad finding fields or citations; 56 episodes had at least one rejected one-ID finding. Overruns rose from 33 to 43, including 17 at 15 minutes. Among runs with no invalid actions, mean values were −1.00 / −1.33 / 3.50, efficiency was 0.35 on just two matched pairs, and oracle share was 23.3% on just two runs at 60 minutes. Treat those subset numbers with caution.
+
+The [syntax-only baseline](https://modal.com/apps/genr234/main/ap-VBFlCsT3qeHHVbjrLKaVjK) used L40S × 329.8 s, or about $0.18. Cumulative GPU spend through this baseline was about $0.77, excluding startup and the SFT job still in progress at that point.
+
+The [SFT training job](https://modal.com/apps/genr234/main/ap-mc8OuAnyxRPClPZ56uaISD) completed 240 steps and saved the adapter. It prepared 697 examples and measured a mean training loss of 0.0725. Training used L40S × 634.6 s, or about $0.34 excluding startup.
+
+With the same syntax-only decoder, SFT raised budget efficiency from 0.07 to 0.57 and 60-minute value from 0% to 54.3% of the oracle. Both runs had zero parse failures. Invalid actions fell from 139 to zero and overruns fell from 43 to 11 (from 17 to 2 at 15 minutes). The SFT final drafts had 11 unsupported findings: eight that cited a failed or archived source and three missing a stage. Neither corrected run cited an unread source or had a wrong value after the evidence checks.
+
+| ETA, completed tasks only | Coverage | Mean width | Mean waste | Mean time vs. fair lookup |
+| --- | ---: | ---: | ---: | ---: |
+| Syntax-only base | 2/6 | 20.83 min | 1.33 min | +0.33 min |
+| Syntax-only SFT | 11/19 | 29.37 min | 0.00 min | −1.47 min |
+
+SFT completed more ETA tasks and improved coverage, but the intervals were wider and coverage still fell short of the requested 80%. The two rows include different sets of completed tasks. The outcome shows improvement on development cases, not that the model generalizes to the held-out family. It also does not separate better tool use from better time decisions. GRPO and held-out model evaluation have not run.
+
+The [syntax-only SFT evaluation](https://modal.com/apps/genr234/main/ap-m04Q23poWvWy6pvAqg0PPw) used L40S × 359.9 s, or about $0.20. Total measured GPU time for this phase was 2,421.9 L40S seconds, or about $1.31, excluding startup. The longest function was the SFT job at 634.6 seconds. No job was near $8.
