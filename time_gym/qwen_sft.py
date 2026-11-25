@@ -7,6 +7,10 @@ from time_gym.policies import run_policy
 from time_gym.qwen_eval import DEV_EVAL_SEEDS, act, initial_chat
 from time_gym.report import ReportEpisode
 
+FLA = "flash-linear-attention==0.4.2"
+CAUSAL_CONV = ("https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.6.2.post1/"
+               "causal_conv1d-1.6.2.post1%2Bcu12torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl")
+
 
 def _decision_note(episode, action):
     args = action["args"]

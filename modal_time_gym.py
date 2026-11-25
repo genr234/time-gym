@@ -6,7 +6,7 @@ from time import monotonic
 
 import modal
 
-from modal_sft import CAUSAL_CONV, FLA
+from time_gym.qwen_sft import CAUSAL_CONV, FLA
 
 app = modal.App("time-gym-qwen")
 cache = modal.Volume.from_name("time-gym-qwen-weights", create_if_missing=True)
@@ -63,7 +63,7 @@ def inference(adapter_enabled, memory_fraction=0.86, context=8192, *, thinking=F
 
 
 @app.function(image=eval_image, gpu=GPU, cpu=4, memory=16384, timeout=EVAL_TIMEOUT, startup_timeout=360,
-              scaledown_window=2, max_containers=1, volumes={"/cache": cache})
+              retries=0, scaledown_window=2, max_containers=1, volumes={"/cache": cache})
 def baseline(adapter: str = "", split: str = "dev", policy: str = "base", thinking: bool = False):
     from vllm.lora.request import LoRARequest
     from time_gym.qwen_eval import evaluate

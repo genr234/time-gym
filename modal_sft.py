@@ -4,6 +4,8 @@ from time import monotonic
 
 import modal
 
+from time_gym.qwen_sft import CAUSAL_CONV, FLA
+
 app = modal.App("time-gym-qwen-sft")
 cache = modal.Volume.from_name("time-gym-qwen-weights", create_if_missing=True)
 image = (
@@ -14,9 +16,6 @@ image = (
 GPU = "L40S"
 ADAPTER = "/cache/time-gym-sft-v1"
 THINKING_ADAPTER = "/cache/time-gym-sft-v2"
-FLA = "flash-linear-attention==0.4.2"
-CAUSAL_CONV = ("https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.6.2.post1/"
-               "causal_conv1d-1.6.2.post1%2Bcu12torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl")
 thinking_image = image.uv_pip_install(FLA, CAUSAL_CONV).add_local_python_source("time_gym")
 image = image.add_local_python_source("time_gym")
 
