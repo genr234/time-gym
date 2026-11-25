@@ -44,8 +44,9 @@ def train_worker(adapter, output):
     from transformers import Qwen3_5ForConditionalGeneration
 
     model = Qwen3_5ForConditionalGeneration.from_pretrained(MODEL, revision=REVISION, dtype=torch.bfloat16)
-    model = PeftModel.from_pretrained(model, adapter, is_trainable=True).cuda().eval()
+    model = PeftModel.from_pretrained(model, adapter, is_trainable=True).cuda().train()
     model.config.use_cache = False
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=1e-5)
     for line in sys.stdin:
         source = Path(line.strip())
