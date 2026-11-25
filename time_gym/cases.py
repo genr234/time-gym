@@ -1,0 +1,115 @@
+"""Generate fictional cases. Only the simulator and oracle see the hidden fields."""
+
+from dataclasses import dataclass, replace
+from random import Random
+
+DEV_FAMILIES = ("corroborate", "conflict", "chain")
+HELD_OUT_FAMILIES = ("branch",)
+DEV_SEEDS = tuple(range(12))
+HELD_OUT_SEEDS = tuple(range(100, 112))
+BUDGETS = (15, 30, 60)
+
+
+@dataclass(frozen=True)
+class Source:
+    id: str
+    stage: int
+    bounds: tuple[int, int]
+    minutes: int
+    value: str
+    status: str = "current"
+    gated: bool = False
+    opens: str | None = None
+
+    def catalog(self):
+        return {"id": self.id, "stage": self.stage, "read_minutes": self.bounds,
+                "link_required": self.gated}
+
+
+@dataclass(frozen=True)
+class Topic:
+    name: str
+    weight: int
+    value: str
+    sources: tuple[Source, ...]
+
+    def route(self, read=()):
+        """Cheapest current record at each stage, in access order."""
+        path = []
+        for stage in range(1, max(s.stage for s in self.sources) + 1):
+            choices = [s for s in self.sources if s.stage == stage and s.status == "current"
+                       and (not s.gated or s.id == path[-1].opens)]
+            path.append(min(choices, key=lambda s: (0 if s.id in read else s.minutes, s.id)))
+        return tuple(path)
+
+
+@dataclass(frozen=True)
+class Case:
+    family: str
+    seed: int
+    topics: tuple[Topic, ...]
+    targets: tuple[str, ...]
+
+    @property
+    def split(self):
+        return "held-out" if self.family in HELD_OUT_FAMILIES else "dev"
+
+
+def generate(family, seed):
+    if family not in (*DEV_FAMILIES, *HELD_OUT_FAMILIES):
+        raise ValueError(f"Unknown family: {family}")
+    rng = Random(f"time-gym-v2/{family}/{seed}")
+    topics = []
+    for index in range(rng.randint(12, 20)):
+        name = f"Site {index + 1:02d} opening date"
+        month = rng.choice(("April", "May", "June", "July", "August"))
+        day = rng.randint(1, 27)
+        value, other = f"{day} {month}", f"{day + 1} {month}"
+        quick = index == 0
+        a, reserve, b, c, d = rng.sample(range(10, 99), 5)
+        a, reserve, b, c, d = (f"{index + 1:02d}-{n}" for n in (a, reserve, b, c, d))
+        branch = rng.choice((b, c))
+        link = {"chain": b, "branch": branch}.get(family)
+
+        def record(id, stage, low, width, text, *, status="current", gated=False, opens=None):
+            return Source(id, stage, (low, low + width), rng.randint(low, low + width),
+                          text, status, gated, opens)
+
+        first = 3 if quick else rng.randint(5, 8)
+        second = 5 if quick else rng.randint(7, 10)
+        status = "current" if quick else rng.choices(("current", "failed", "archived"), (7, 2, 1))[0]
+        sources = [record(a, 1, first, 2, other if status == "archived" else value,
+                          status=status, opens=link),
+                   record(reserve, 1, first + 2, 2, value, opens=link)]
+        if family == "branch":
+            for id in (b, c):
+                sources.append(record(id, 2, second if id == b or quick else second + 2, 2,
+                                      value if id == branch else other, gated=True, opens=d))
+            sources.append(record(d, 3, 1 if quick else rng.randint(3, 6), 1, value, gated=True))
+        else:
+            sources.append(record(b, 2, second, 2, other if family == "conflict" else value,
+                                  gated=family == "chain"))
+            if family == "conflict":
+                sources.append(record(c, 3, 1 if quick else rng.randint(3, 6), 1, value))
+        # Alternate which record is correct in a conflict. Never disclose that in the catalog.
+        if family == "conflict" and rng.randrange(2):
+            value = other
+            sources[-1] = replace(sources[-1], value=value)
+        rng.shuffle(sources)
+        topics.append(Topic(name, rng.randint(1, 5), value, tuple(sources)))
+    targets = tuple(t.name for t in rng.sample(topics[1:], 3))
+    rng.shuffle(topics)
+    return Case(family, seed, tuple(topics), targets)
+
+
+def matrix_cases(split, seeds=None):
+    """Use only development families unless evaluation is explicitly selected."""
+    if split == "dev":
+        families, defaults = DEV_FAMILIES, DEV_SEEDS
+    elif split == "held-out":
+        families, defaults = HELD_OUT_FAMILIES, HELD_OUT_SEEDS
+    else:
+        raise ValueError(f"Unknown split: {split}")
+    for family in families:
+        for seed in defaults if seeds is None else seeds:
+            yield generate(family, seed)
