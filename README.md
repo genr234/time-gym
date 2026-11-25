@@ -86,3 +86,20 @@ Across all 48 traces, 44 episodes had an invalid action, 18 overran, 17 saved an
 | [Development baseline](https://modal.com/apps/genr234/main/ap-SXTqXR4ap6WI4TecjO5Ch9) | L40S × 423.5 s | $0.23 GPU | 48 episodes complete |
 
 Estimates use [Modal list prices](https://modal.com/pricing) and measured function time. They exclude container startup outside the function, CPU image builds, and other billing overhead. The full GPU client run took 441.8 seconds, or at most $0.24 if that entire time were charged at the L40S rate. The phase GPU cap is $25. The baseline uses one L40S, a 360-second startup limit, and a 1,500-second run limit, or about $1.01 at the L40S rate for both limits combined.
+
+### Prompt-only control
+
+The task-specific prompt removed the 409 rejected estimate calls on the original 48 episodes. But unparseable output increased from 3 to 32 episodes, often at the save step. The prompt change did not isolate time use from protocol errors. We kept the model, tools, parser, and sampling settings unchanged. This task-specific prompt is also used for SFT examples and is the prompt for later model comparisons.
+
+| Prompt and subset | Mean value at 15 / 30 / 60 min | Budget efficiency | 60-min value as share of oracle |
+| --- | ---: | ---: | ---: |
+| Original, seeds 0–1, all | −0.17 / −1.67 / −1.75 | −0.18 | −13.1% |
+| Task-specific, seeds 0–1, all | 0.00 / −0.42 / −1.08 | −0.13 | −8.1% |
+| Task-specific, seeds 0–3, all | 0.00 / 0.63 / −0.63 | −0.07 | −4.6% |
+| Original, seeds 0–1, no invalid actions | −2.00 / — / — | — | — |
+| Task-specific, seeds 0–1, no invalid actions | 0.00 / 0.00 / 0.00 | 0.00 | 0% |
+| Task-specific, seeds 0–3, no invalid actions | 0.00 / 0.00 / 0.00 | 0.00 | 0% |
+
+The last two rows use 8 and 12 paired 15- and 60-minute runs for efficiency. Each 60-minute oracle comparison uses only the corresponding cases and samples. A parse failure can end an episode before the simulator records an invalid action. If we also exclude parse failures, neither prompt has a protocol-clean 60-minute episode. None of the 24 ETA episodes with the task-specific prompt completed the scope. Six raw traces are in [the sample](results/qwen-base-dev-sample.jsonl): three matched pairs selected to show an invalid action, an unsupported claim, and a verified finding in the original run.
+
+The prior run gave a conservative estimate of $0.46 for twice as many episodes. The [prompt-only run](https://modal.com/apps/genr234/main/ap-ShTCJ7j9Wqgk3vRBNY5s2E) used one L40S for 281.2 seconds, an estimated $0.15 GPU spend. Total GPU spend through step 1b: $0.38, excluding startup.

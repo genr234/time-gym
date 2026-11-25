@@ -5,3 +5,4 @@ __pycache__/
 build/
 dist/
 *.jsonl
+!/results/qwen-base-dev-sample.jsonl

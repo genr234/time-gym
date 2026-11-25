@@ -4,22 +4,41 @@ import json
 
 from time_gym import request_cap
 from time_gym.cases import BUDGETS, matrix_cases
-from time_gym.report import INSTRUCTIONS, ReportEpisode
+from time_gym.report import ReportEpisode
 
 MODEL = "Qwen/Qwen3.5-4B"
 REVISION = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
 SAMPLE_SEEDS = (41, 42)
-DEV_EVAL_SEEDS = (0, 1)
-PROMPT = INSTRUCTIONS + (
-    ' Output one JSON object per turn, with no prose: {"tool":"name","args":{}}. '
-    'Tools: read_source(source_id); save_draft(findings), each with topic, value, source_ids; '
-    'estimate(low, high) for ETA only; finish() to deliver your last saved report. '
-    'Each save replaces the draft and costs one minute. Read tool results before your next call.'
+DEV_EVAL_SEEDS = (0, 1, 2, 3)
+PROMPT = (
+    "Reply with exactly one JSON action object per turn. Read the tool result before your next action. "
+    "Read costs are hidden within their listed ranges. Failed reads still cost time. "
+    "For each finding, cite one current record you read from every stage of the same topic. "
+    "Use the last stage's value to settle disagreement. Cite the record that opens each gated record. "
+    "If a link leads to an archived record, try another path. Unsupported claims subtract value. "
+    "Each save costs one minute and replaces the draft."
 )
 
 
 def initial_chat(episode):
-    return [{"role": "system", "content": PROMPT}, {"role": "user", "content": json.dumps(episode.brief())}]
+    brief = episode.brief()
+    if episode.budget is None:
+        task = ("ETA task: call estimate exactly once, first. Give an 80% interval for your own time to verify "
+                "and save all listed topics. The first complete verified save ends the task. "
+                "Re-reads, retries, invalid actions, and extra saves lower reward.")
+        examples = ['{"tool":"estimate","args":{"low":42,"high":67}}']
+    else:
+        task = f"Budget task: you have {episode.budget} minutes. Do not call estimate. Maximize verified report value."
+        examples = []
+    stages = max(s["stage"] for t in brief["topics"] for s in t["sources"])
+    examples.extend([
+        '{"tool":"read_source","args":{"source_id":"example-1"}}',
+        json.dumps({"tool": "save_draft", "args": {"findings": [{"topic": "Example opening date",
+                    "value": "18 May", "source_ids": [f"example-{i}" for i in range(1, stages + 1)]}]}}),
+        '{"tool":"finish","args":{}}',
+    ])
+    user = task + "\n\nAllowed actions (examples only; use actual catalog IDs and read values):\n" + "\n".join(examples)
+    return [{"role": "system", "content": PROMPT}, {"role": "user", "content": user + "\n\nCatalog:\n" + json.dumps(brief)}]
 
 
 def act(episode, chat, output):
