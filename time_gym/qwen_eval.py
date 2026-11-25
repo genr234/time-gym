@@ -48,7 +48,7 @@ def action_schema(*, eta):
 
     string = {"type": "string"}
     integer = {"type": "integer"}
-    finding = obj(topic=string, value=string, source_ids={"type": "array", "items": string, "minItems": 2, "maxItems": 3})
+    finding = obj(topic=string, value=string, source_ids={"type": "array", "items": string})
     actions = {"read_source": obj(source_id=string), "save_draft": obj(findings={"type": "array", "items": finding}),
                "finish": obj()}
     if eta:

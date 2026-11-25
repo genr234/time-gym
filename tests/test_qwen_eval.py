@@ -20,6 +20,17 @@ class QwenEvaluationTests(unittest.TestCase):
                 self.assertFalse(variants[name]["additionalProperties"])
                 self.assertEqual(variants[name]["properties"]["args"]["required"], fields)
 
+    def test_citation_count_is_validated_by_the_simulator_not_the_decoder(self):
+        schema = action_schema(eta=False)
+        save = next(s for s in schema["anyOf"] if s["properties"]["tool"]["const"] == "save_draft")
+        finding = save["properties"]["args"]["properties"]["findings"]["items"]
+        self.assertEqual(finding["properties"]["source_ids"], {"type": "array", "items": {"type": "string"}})
+        episode = ReportEpisode(generate("corroborate", 0), 15)
+        episode.step("save_draft", {"findings": [{"topic": "Example", "value": "18 May", "source_ids": ["06-77"]}]})
+        metrics = episode.metrics()
+        self.assertEqual((metrics["elapsed"], metrics["invalid_actions"], metrics["unsupported"], metrics["value"]),
+                         (1, 1, 0, 0))
+
     def test_prompt_lists_only_allowed_actions_and_cites_every_stage(self):
         for family, stages in (("chain", 2), ("conflict", 3)):
             for budget in (15, None):
