@@ -85,8 +85,9 @@ def main(output: str, adapter: str = "", split: str = "dev", policy: str = ""):
 
 rl_image = vllm_image.run_commands(
     "python -m pip install uv",
-    "uv venv --system-site-packages /opt/train",
-    "uv pip install --python /opt/train/bin/python transformers==5.3.0 peft==0.18.1",
+    "uv venv /opt/train",
+    "uv pip install --python /opt/train/bin/python torch==2.10.0 transformers==5.3.0 peft==0.18.1 'gymnasium>=1.0,<2'",
+    "/opt/train/bin/python -c 'from peft import PeftModel; from transformers import Qwen3_5ForConditionalGeneration'",
 ).add_local_python_source("time_gym")
 SFT_ADAPTER = "/cache/time-gym-sft-v1"
 RL_ADAPTER = "/cache/time-gym-grpo-v1"
