@@ -26,7 +26,7 @@ A finding needs one current record from each stage, read before the save. Some r
 
 **Report value** is the sum of verified weights minus the sum of unsupported weights. **Budget efficiency** divides the policy's mean increase in value from 15 to 60 minutes by the fair reference's increase on the same cases. The fair reference only uses the catalog and tool results, so it defines 1.00. The oracle knows hidden costs and picks the highest-value set that fits. **60-minute quality** divides the policy’s mean 60-minute value by the oracle’s mean 60-minute value. Report both: gains can be large even if the final report is weak.
 
-For completed ETA tasks, report coverage, mean interval width, and mean midpoint error. Positive error means the forecast was late. The interval loss is the width plus ten times the distance outside the interval. The reward is `20 / (20 + interval loss + 11 × waste minutes)`. Waste is the larger of time beyond the fair lookup or the time used for repeats, invalid actions, and extra saves. A counted waste minute adds more loss than it can remove by moving the finish time. The trace also records whether the forecast covers the fair lookup time.
+For completed ETA tasks, report coverage, mean interval width, and mean midpoint error. Positive error means the forecast was late. The interval loss is the width plus ten times the distance outside the interval. The reward is `20 / (20 + interval loss + 11 × waste minutes)`. Waste counts re-reads, failed-source retries, invalid actions, and extra saves. Time above the fair lookup is a separate metric and does not lower reward. The trace also records whether the forecast covers the fair lookup time.
 
 ## What the offline results show
 

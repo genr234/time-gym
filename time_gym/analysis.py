@@ -50,7 +50,7 @@ def summarize(rows):
             eta[policy] = {"episodes": len(group), "scope_complete": sum(r["scope_complete"] for r in group),
                            "forecasts": sum(r["eta"] is not None for r in group), "reward": mean(r["reward"] for r in group)}
             for key in ("eta_width", "eta_covered", "eta_bias", "eta_interval_score",
-                        "eta_reference_covered", "eta_waste_minutes"):
+                        "eta_reference_covered", "eta_waste_minutes", "eta_minutes_vs_reference"):
                 values = [r[key] for r in group if r[key] is not None and (key != "eta_width" or r["scope_complete"])]
                 eta[policy][key] = mean(values) if values else None
     oracle_at_60 = budgets.get("oracle", {}).get(60)

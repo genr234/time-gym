@@ -6,7 +6,7 @@ from datetime import datetime
 INSTRUCTIONS = (
     "Use one tool per turn. In the budget task, maximize verified topic weight before the deadline. "
     "In the ETA task, give an 80% interval for your own time to verify and save all topics, before any reads. "
-    "The first complete, verified save ends the task. Padding and time beyond a fair lookup both lower reward. "
+    "The first complete, verified save ends the task. Re-reads, retries, invalid actions, and extra saves lower reward. "
     "Each finding must cite one current record you read from each listed stage. "
     "Use the last stage's value to settle disagreement. Cite the predecessor that links to each gated record. "
     "If a link leads to an archived record, go back and try another path. "
@@ -208,7 +208,7 @@ class ReportEpisode:
                              for t in self.topics.values() if t.name not in self.verified_topics):
             unused = remaining
         forecast = {"eta_width": None, "eta_covered": None, "eta_bias": None, "eta_interval_score": None,
-                    "eta_reference_covered": None, "eta_waste_minutes": None}
+                    "eta_reference_covered": None, "eta_waste_minutes": None, "eta_minutes_vs_reference": None}
         reward = self.saved["value"] / sum(t.weight for t in self.topics.values()) if self.budget is not None else 0.0
         if self.eta:
             low, high = self.eta
@@ -217,11 +217,11 @@ class ReportEpisode:
             if actual is not None:
                 loss = high - low + 10 * max(low - actual, actual - high, 0)
                 # One wasted minute costs at least as much as it can reduce the interval loss.
-                waste = max(actual - self.eta_reference, self.reread_minutes + self.retry_minutes
-                            + self.invalid_actions + len(self.draft_scores) - 1)
+                waste = self.reread_minutes + self.retry_minutes + self.invalid_actions + len(self.draft_scores) - 1
                 reward = 20 / (20 + loss + 11 * waste)
                 forecast.update(eta_covered=low <= actual <= high, eta_bias=(low + high) / 2 - actual,
-                                eta_interval_score=loss, eta_waste_minutes=waste)
+                                eta_interval_score=loss, eta_waste_minutes=waste,
+                                eta_minutes_vs_reference=actual - self.eta_reference)
         return {"split": self.case.split, "family": self.case.family, "seed": self.case.seed,
                 "budget": self.budget, "task": "eta" if self.budget is None else "budget",
                 "elapsed": self.elapsed, "outcome": self.outcome, **self.saved, "reward": reward,

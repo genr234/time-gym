@@ -90,6 +90,16 @@ class ReportTests(unittest.TestCase):
         self.assertEqual((honest["eta_interval_score"], padded["eta_interval_score"]), (100, 0))
         self.assertLess(padded["reward"], honest["reward"])
 
+    def test_slower_unique_lookup_is_not_waste(self):
+        topic = Topic("Opening", 4, "18 May", (record("fast", 1, 2), record("slow", 1, 8), record("b", 2, 5)))
+        episode = ReportEpisode(Case("corroborate", 0, (topic,), (topic.name,)))
+        episode.step("estimate", {"low": 14, "high": 14})
+        for source in ("slow", "b"):
+            episode.step("read_source", {"source_id": source})
+        episode.step("save_draft", draft("Opening", "18 May", "slow", "b"))
+        score = episode.metrics()
+        self.assertEqual((score["eta_minutes_vs_reference"], score["eta_waste_minutes"], score["reward"]), (6, 0, 1.0))
+
     def test_dead_end_requires_backtracking_and_cannot_be_cited(self):
         topic = Topic("Opening", 4, "18 May", (
             record("a", 1, 2, opens="dead"), record("backup", 1, 4, opens="live"),
