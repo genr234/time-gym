@@ -2,7 +2,7 @@
 
 **When an AI agent gets more time, does it deliver a better report? Can it estimate how long its own work will take?** Time Gym is a tool-use benchmark and a reinforcement learning environment for an RL hackathon application.
 
-**Offline result:** On the held-out family, the fair reference scored **1.00** for budget efficiency and reached **67%** of the oracle’s 60-minute value. The random plan scored **0.73** and **34%**; fixed-15 scored **0.00** and **20%**. These are results for scripts. No model was tested live or trained.
+**Result:** On development cases, supervised fine-tuning (SFT) raised Qwen3.5-4B from **0.07 to 0.57** budget efficiency and from **0% to 54%** of oracle value at 60 minutes. On the held-out branch family, SFT scored **−0.02** and **13%**; the fair script scored **1.00** and **67%**. The small reinforcement learning run showed no clear gain over SFT on either split.
 
 ## Run the benchmark
 
@@ -164,3 +164,63 @@ With the same syntax-only decoder, SFT raised budget efficiency from 0.07 to 0.5
 SFT completed more ETA tasks and improved coverage, but the intervals were wider and coverage still fell short of the requested 80%. The two rows include different sets of completed tasks. The outcome shows improvement on development cases, not that the model generalizes to the held-out family. It also does not separate better tool use from better time decisions. GRPO and held-out model evaluation have not run.
 
 The [syntax-only SFT evaluation](https://modal.com/apps/genr234/main/ap-m04Q23poWvWy6pvAqg0PPw) used L40S × 359.9 s, or about $0.20. Total measured GPU time for this phase was 2,421.9 L40S seconds, or about $1.31, excluding startup. The longest function was the SFT job at 634.6 seconds. No job was near $8.
+
+### Budget-only group-relative training
+
+Start from the SFT adapter. Sample eight complete episodes on the same case and budget, then use each episode's terminal reward minus the group mean, divided by the group standard deviation. One update uses fresh samples; there is no replay or separate value model. This is a single-step GRPO variant. The update uses the raw model token log probabilities for the policy-ratio gradient, but samples come from the schema-constrained decoder. Without the decoder mask or importance correction, the update is slightly off-policy. The 30 groups use only development seeds 4–11. ETA tasks are only evaluated, not trained in this pass.
+
+The run checks all 96 development episodes at steps 15 and 30. It stops and rejects the checkpoint if mean budget reward rises but 60-minute value does not. The oracle denominator is fixed on these cases. The check also records re-read minutes, unused useful minutes, unsupported findings, and ETA waste. The GPU limit per job is one H100 for 5,400 seconds plus 360 seconds of startup, about $6.32 at the H100 list price of $0.001097 per second.
+
+| GRPO job | GPU × function time | Estimated GPU spend | Result |
+| --- | --- | ---: | --- |
+| [Initial launch](https://modal.com/apps/genr234/main/ap-5tDwNI6FcVFcNstGNiYBPp) | H100 × 0 s | $0.00 | Image definition rejected before GPU allocation |
+| [Shared environment](https://modal.com/apps/genr234/main/ap-nuZZ9u7uwwqsqJRcUeTlup) | H100 × 313.7 s | $0.34 | Incompatible vision dependency; no update |
+| [Isolated trainer](https://modal.com/apps/genr234/main/ap-UdNz6w31YFvWKT8pxLb9Ke) | H100 × 275.5 s | $0.30 | Out of memory on group 3; no saved adapter |
+| [Checkpointed trainer](https://modal.com/apps/genr234/main/ap-DF3kydAO1p2CUa8YZFTI33) | H100 × 2,595.4 s | $2.85 | Completed 30 groups and saved the adapter |
+
+| Development checkpoint | Mean budget reward | 60-min value | Re-read min | Unused useful min | Unsupported findings | ETA waste min |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Base | 0.0036 | 0.00 | 0 | 21 | 73 | 8 |
+| SFT | 0.0975 | 7.42 | 0 | 323 | 11 | 0 |
+| GRPO step 15 | 0.0966 | 7.46 | 0 | 515 | 8 | 0 |
+| GRPO step 30 | 0.0989 | 7.58 | 0 | 415 | 11 | 2 |
+
+The stop rule did not trigger. At step 30, mean values at 15, 30, and 60 minutes were 1.96, 2.88, and 7.58. Efficiency was 0.59, and oracle share was 55.5%, up from 54.3% after SFT. ETA completion fell from 19/24 to 18/24, and coverage fell from 11/19 to 9/18. Mean interval width rose from 29.37 to 30.17 minutes and mean waste rose from zero to 0.11 minutes. The gain in report value is small; the unused time and ETA metrics regressed.
+
+### Paired uncertainty intervals
+
+The intervals use 20,000 bootstrap draws (seed 41). Each draw resamples whole cases within each family. Both sample seeds, both budgets, both models, and the two reference policies stay paired. Each draw uses its own fair gain and oracle value as denominators. There are 12 distinct cases per split, so the intervals do not measure variation across other families or independent training runs.
+
+| Split and comparison | 60-min value difference [95% interval] | Efficiency difference [95% interval] | Oracle-share difference, percentage points [95% interval] |
+| --- | ---: | ---: | ---: |
+| Development, SFT − base | +7.42 [4.38, 10.50] | +0.50 [0.16, 0.85] | +54.3 [31.7, 77.5] |
+| Development, GRPO − SFT | +0.17 [−1.92, 2.04] | +0.02 [−0.20, 0.21] | +1.2 [−13.8, 14.7] |
+| Held-out, SFT − base | +0.63 [−1.58, 2.58] | −0.16 [−0.59, 0.21] | +5.1 [−12.3, 21.5] |
+| Held-out, GRPO − SFT | −0.13 [−1.00, 0.63] | −0.02 [−0.16, 0.11] | −1.0 [−8.3, 4.8] |
+
+The RL result is null on both splits: all six GRPO intervals include zero. This does not prove that the two adapters are equivalent. SFT improved all three development metrics, but none of its held-out budget intervals excludes zero. Recompute offline with `uv run --locked python -m time_gym.qwen_intervals <dev-or-held-out> <base.jsonl> <sft.jsonl> <grpo.jsonl>`.
+
+### Frozen held-out settings
+
+The held-out matrix uses branch seeds 100–111, sample seeds 41 and 42, three budgets, and an ETA task: 96 episodes per model. The first base attempt exceeded the 8,192-token context limit. We stopped the two adapter jobs without results and increased the limit to 32,768 for all three models. The weights, case split, prompt, schema, sampling, and simulator did not change. No partial scores were used. The failed base and stopped SFT and GRPO jobs used L40S × 458.8 s, 644.4 s, and 643.0 s respectively, or about $0.95 combined before startup charges.
+
+Frozen weights: Qwen revision `851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a`; SFT adapter SHA-256 `ccd339ae7e2ed6bca3546cb00f64af9332a1dce67f1b010aeb1a6c5f0ca29a32`; GRPO adapter SHA-256 `4a55cd273a3e0a8df8b42ea82e495c167a5f0938a1143455452d10e0e84daf8c`.
+
+| Held-out policy | Mean value at 15 / 30 / 60 min | Efficiency | 60-min oracle share | ETA complete |
+| --- | ---: | ---: | ---: | ---: |
+| Base | 0.17 / −0.08 / 1.00 | 0.14 | 8.1% | 2/24 |
+| SFT | 1.75 / 2.38 / 1.63 | −0.02 | 13.2% | 11/24 |
+| GRPO | 1.75 / 2.13 / 1.50 | −0.04 | 12.2% | 10/24 |
+| Fair | 2.42 / 2.50 / 8.25 | 1.00 | 66.9% | 24/24 |
+| Oracle | 2.42 / 5.42 / 12.33 | 1.70 | 100% | 24/24 |
+| Fixed-15 | 2.42 / 2.42 / 2.42 | 0.00 | 19.6% | — |
+
+| Held-out model | ETA covered / complete | Mean ETA width / waste (min) | Re-read min | Unused useful min | Unsupported findings | ETA waste min |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Base | 0/2 | 22.50 / 4.50 | 19 | 85 | 34 | 9 |
+| SFT | 2/11 | 32.82 / 3.09 | 1,342 | 471 | 8 | 34 |
+| GRPO | 2/10 | 31.60 / 3.00 | 1,706 | 515 | 10 | 30 |
+
+ETA width and waste means use completed tasks only. Other columns are totals; ETA waste is observed only on completed tasks. There were no parse failures. Base, SFT, and GRPO had 50, 14, and 15 overruns, and 359, 605, and 543 invalid actions. The tuned models completed more ETA tasks but did not convert extra budget into more value on this family. The high re-read totals show repeated work, not evidence that the models learned to exploit the reward.
+
+The completed held-out runs used three L40S jobs: [base](https://modal.com/apps/genr234/main/ap-IyBNI4vyS98P8312uQdB8f) × 457.4 s, [SFT](https://modal.com/apps/genr234/main/ap-VCco6bGjxANGa9bjNKpQ6H) × 769.9 s, and [GRPO](https://modal.com/apps/genr234/main/ap-ga5pK0vw12JXXyWMYqk3Re) × 858.8 s, or $1.13 combined. Total GPU spend for the phase was about **$6.88**, including failed and stopped jobs, at list rates and excluding startup. No job exceeded $8.
