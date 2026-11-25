@@ -41,6 +41,21 @@ def initial_chat(episode):
     return [{"role": "system", "content": PROMPT}, {"role": "user", "content": user + "\n\nCatalog:\n" + json.dumps(brief)}]
 
 
+def action_schema(*, eta):
+    """Constrain action syntax, not evidence, timing, or the choice of source."""
+    def obj(**properties):
+        return {"type": "object", "properties": properties, "required": list(properties), "additionalProperties": False}
+
+    string = {"type": "string"}
+    integer = {"type": "integer"}
+    finding = obj(topic=string, value=string, source_ids={"type": "array", "items": string, "minItems": 2, "maxItems": 3})
+    actions = {"read_source": obj(source_id=string), "save_draft": obj(findings={"type": "array", "items": finding}),
+               "finish": obj()}
+    if eta:
+        actions["estimate"] = obj(low=integer, high=integer)
+    return {"anyOf": [obj(tool={"const": name}, args=args) for name, args in actions.items()]}
+
+
 def act(episode, chat, output):
     chat.append({"role": "assistant", "content": output})
     try:

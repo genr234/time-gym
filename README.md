@@ -103,3 +103,29 @@ The task-specific prompt removed the 409 rejected estimate calls on the original
 The last two rows use 8 and 12 paired 15- and 60-minute runs for efficiency. Each 60-minute oracle comparison uses only the corresponding cases and samples. A parse failure can end an episode before the simulator records an invalid action. If we also exclude parse failures, neither prompt has a protocol-clean 60-minute episode. None of the 24 ETA episodes with the task-specific prompt completed the scope. Six raw traces are in [the sample](results/qwen-base-dev-sample.jsonl): three matched pairs selected to show an invalid action, an unsupported claim, and a verified finding in the original run.
 
 The prior run gave a conservative estimate of $0.46 for twice as many episodes. The [prompt-only run](https://modal.com/apps/genr234/main/ap-ShTCJ7j9Wqgk3vRBNY5s2E) used one L40S for 281.2 seconds, an estimated $0.15 GPU spend. Total GPU spend through step 1b: $0.38, excluding startup.
+
+### Constrained decoding and SFT
+
+The Qwen comparison uses vLLM 0.19.0 structured output for both the base model and adapters. Each response must be one JSON action object with the fields for that tool. Budget tasks cannot call `estimate`. This controls for bracket and trailing-text errors in the time comparison. The decoder does not choose which sources to read, check citations, reserve time for a save, or prevent an overrun. The prompt and sampling settings did not change from the prompt-only run.
+
+The supervised fine-tuning (SFT) job uses a rank-8 LoRA and 240 TRL optimizer steps. Its teacher is the fair policy. The training cases use development seeds 4–11. The model comparison uses seeds 0–3. Held-out cases are not used in either step. Training applies loss only to the assistant's next action and end token in the evaluation chat format.
+
+With an approved Modal budget and configured credentials, run these steps in order. The last command loads the adapter in the same constrained evaluator as the base model.
+
+```sh
+uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py --output qwen-base-dev-constrained.jsonl
+uvx --with-editable . --from modal==1.6.4 modal run modal_sft.py::train
+uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py --adapter /cache/time-gym-sft-v1 --output qwen-sft-dev-constrained.jsonl
+```
+
+The [first SFT launch](https://modal.com/apps/genr234/main/ap-prqcCxQoeld37NFaI4ZBlq) was stopped before the constrained baseline. It loaded the model and prepared 697 examples, but logged no optimizer step or checkpoint. It used one L40S for 8.6 measured seconds, or about $0.005 in GPU spend. The SFT timeout plus startup limit caps a full run at about $1.50 in GPU spend.
+
+| Qwen run, all episodes | Mean value at 15 / 30 / 60 min | Budget efficiency | 60-min share of oracle | ETA complete |
+| --- | ---: | ---: | ---: | ---: |
+| Original base, seeds 0–1 | −0.17 / −1.67 / −1.75 | −0.18 | −13.1% | 1/12 |
+| Prompt-only base, seeds 0–3 | 0.00 / 0.63 / −0.63 | −0.07 | −4.6% | 0/24 |
+| Constrained base, seeds 0–3 | −4.42 / −7.50 / −12.79 | −0.88 | −93.6% | 6/24 |
+
+The constrained base produced 839 schema-valid actions and four incomplete 60-minute save actions. Unparseable episodes fell from 61 to 4. But episodes with unsupported claims rose from 12 to 69, and overruns rose from 23 to 33 (15 at the 15-minute budget). All 20 remaining invalid actions tried to read a gated source before its link was open. With zero invalid actions, mean values were −5.05 / −9.00 / −16.70, efficiency was −1.19 (20 matched pairs), and oracle share was −122.3%. Of six completed ETA tasks, two finished inside the forecast. Mean interval width and waste on those six tasks were 21.67 and 1.33 minutes.
+
+The [constrained baseline](https://modal.com/apps/genr234/main/ap-Xm3wE16Y3NnLbjEka1dfk8) used one L40S for 384.3 seconds, or about $0.21. Estimated total GPU spend through this run, including the stopped SFT launch, was $0.59, excluding startup.

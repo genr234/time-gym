@@ -38,30 +38,36 @@ def check_image():
 
 @app.function(image=eval_image, gpu=GPU, cpu=4, memory=16384, timeout=EVAL_TIMEOUT, startup_timeout=360,
               scaledown_window=2, max_containers=1, volumes={"/cache": cache})
-def baseline():
+def baseline(adapter: str = ""):
     from vllm import LLM, SamplingParams
-    from time_gym.qwen_eval import MODEL, REVISION, evaluate
+    from vllm.lora.request import LoRARequest
+    from vllm.sampling_params import StructuredOutputsParams
+    from time_gym.qwen_eval import MODEL, REVISION, action_schema, evaluate
 
     start = monotonic()
     try:
         engine = LLM(model=MODEL, revision=REVISION, language_model_only=True, dtype="bfloat16",
-                     max_model_len=8192, gpu_memory_utilization=0.86, enforce_eager=True)
+                     max_model_len=8192, gpu_memory_utilization=0.86, enforce_eager=True,
+                     enable_lora=bool(adapter))
         tokenizer = engine.get_tokenizer()
+        schemas = {eta: action_schema(eta=eta) for eta in (True, False)}
+        lora = LoRARequest("sft", 1, adapter) if adapter else None
 
         def sample(chats, seeds):
             prompts = tokenizer.apply_chat_template(chats, tokenize=False, add_generation_prompt=True,
                                                     enable_thinking=False)
-            params = [SamplingParams(temperature=0.7, top_p=0.8, top_k=20, max_tokens=384, seed=seed)
-                      for seed in seeds]
-            return [result.outputs[0].text for result in engine.generate(prompts, params, use_tqdm=False)]
+            params = [SamplingParams(temperature=0.7, top_p=0.8, top_k=20, max_tokens=384, seed=seed,
+                                     structured_outputs=StructuredOutputsParams(json=schemas[chat[1]["content"].startswith("ETA task:")]))
+                      for chat, seed in zip(chats, seeds, strict=True)]
+            return [result.outputs[0].text for result in engine.generate(prompts, params, use_tqdm=False, lora_request=lora)]
 
-        return evaluate(sample)
+        return evaluate(sample, policy="sft" if adapter else "base")
     finally:
         print(f"GPU_JOB baseline {GPU} {monotonic() - start:.1f}s", flush=True)
 
 
 @app.local_entrypoint()
-def main(output: str):
-    rows = baseline.remote()
+def main(output: str, adapter: str = ""):
+    rows = baseline.remote(adapter)
     Path(output).write_text("".join(json.dumps(row) + "\n" for row in rows))
     print(f"Wrote {len(rows)} model episodes to {output}")
