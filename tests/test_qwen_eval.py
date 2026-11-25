@@ -1,13 +1,33 @@
 import json
+from types import SimpleNamespace
 import unittest
 
 from time_gym.cases import generate
 from time_gym.qwen_eval import action_schema, evaluate, initial_chat
+from time_gym.qwen_grpo import advantages, rollout_group, training_tasks
 from time_gym.qwen_sft import fair_examples
 from time_gym.report import ReportEpisode
 
 
 class QwenEvaluationTests(unittest.TestCase):
+    def test_grpo_groups_use_training_cases_and_terminal_rewards(self):
+        tasks = training_tasks()
+        self.assertEqual({(case.split, case.seed) for case, _ in tasks}, {("dev", s) for s in range(4, 12)})
+        case, budget = tasks[0]
+        source = case.topics[0].sources[0].id
+        steps = iter([["read_source", "finish"], ["finish"]])
+
+        def sample(chats, seeds):
+            return [SimpleNamespace(prompt_token_ids=[1], outputs=[SimpleNamespace(token_ids=[2], text=json.dumps(
+                {"tool": tool, "args": {"source_id": source} if tool == "read_source" else {}}))])
+                    for tool in next(steps)]
+
+        group = rollout_group(case, budget, sample, 0, size=2)
+        self.assertEqual([len(tokens) for _, tokens in group], [2, 1])
+        self.assertEqual([r["outcome"] for r, _ in group], ["finished", "finished"])
+        self.assertEqual(advantages([r["reward"] for r, _ in group]), [0, 0])
+        self.assertGreater(advantages([-0.2, 0.0, 0.1])[-1], 0)
+
     def test_action_schema_pairs_each_allowed_tool_with_its_arguments(self):
         for eta in (False, True):
             variants = {s["properties"]["tool"]["const"]: s for s in action_schema(eta=eta)["anyOf"]}
@@ -59,6 +79,14 @@ class QwenEvaluationTests(unittest.TestCase):
         self.assertEqual(rows[0]["outcome"], "unparseable_output")
         self.assertTrue(all(row["outcome"] == "finished" for row in rows[1:]))
         self.assertEqual({row["split"] for row in rows}, {"dev"})
+
+    def test_held_out_evaluation_uses_the_frozen_branch_matrix(self):
+        rows = evaluate(lambda chats, seeds: ['{"tool":"finish","args":{}}'] * len(chats),
+                        split="held-out")
+        self.assertEqual(len(rows), 96)
+        self.assertEqual({(r["family"], r["seed"]) for r in rows}, {("branch", seed) for seed in range(100, 112)})
+        self.assertEqual({(r["budget"], r["sample_seed"]) for r in rows},
+                         {(budget, seed) for budget in (15, 30, 60, None) for seed in (41, 42)})
 
     def test_sft_uses_same_chat_and_feedback_as_evaluation(self):
         examples = iter(fair_examples())

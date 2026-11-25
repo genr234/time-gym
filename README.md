@@ -113,9 +113,9 @@ The supervised fine-tuning (SFT) job uses a rank-8 LoRA and 240 TRL optimizer st
 With an approved Modal budget and configured credentials, run these steps in order. The last command loads the adapter in the same constrained evaluator as the base model.
 
 ```sh
-uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py --output qwen-base-dev-constrained.jsonl
+uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py::main --output qwen-base-dev-constrained.jsonl
 uvx --with-editable . --from modal==1.6.4 modal run modal_sft.py::train
-uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py --adapter /cache/time-gym-sft-v1 --output qwen-sft-dev-constrained.jsonl
+uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py::main --adapter /cache/time-gym-sft-v1 --output qwen-sft-dev-constrained.jsonl
 ```
 
 The [first SFT launch](https://modal.com/apps/genr234/main/ap-prqcCxQoeld37NFaI4ZBlq) was stopped before the constrained baseline. It loaded the model and prepared 697 examples, but logged no optimizer step or checkpoint. It used one L40S for 8.6 measured seconds, or about $0.005 in GPU spend. The SFT timeout plus startup limit caps a full run at about $1.50 in GPU spend.
@@ -127,6 +127,11 @@ The [first SFT launch](https://modal.com/apps/genr234/main/ap-prqcCxQoeld37NFaI4
 | Citation-count-constrained base, seeds 0–3 | −4.42 / −7.50 / −12.79 | −0.88 | −93.6% | 6/24 |
 | Syntax-only base, seeds 0–3 | −0.71 / 0.54 / 0.00 | 0.07 | 0.0% | 6/24 |
 | Syntax-only SFT, seeds 0–3 | 1.96 / 3.00 / 7.42 | 0.57 | 54.3% | 19/24 |
+| Matched fair reference | 2.08 / 4.83 / 11.58 | 1.00 | 84.8% | 24/24 |
+| Matched informed oracle | 2.75 / 6.92 / 13.67 | 1.15 | 100% | 24/24 |
+| Matched fixed-15 control | 2.08 / 2.08 / 2.08 | 0.00 | 15.2% | — |
+
+On the 24 matched pairs, SFT added 5.46 value from 15 to 60 minutes, versus 0.71 for base: **+4.75 value in the gain**, or **+0.50 efficiency points** on the fair scale. The SFT gain is 7.71 times the base gain, but this ratio is sensitive because the base gain is small. Fixed-15 has no ETA policy; its row uses the 72 budget episodes only.
 
 The constrained base produced 839 schema-valid actions and four incomplete 60-minute save actions. Unparseable episodes fell from 61 to 4. But episodes with unsupported claims rose from 12 to 69, and overruns rose from 23 to 33 (15 at the 15-minute budget). All 20 remaining invalid actions tried to read a gated source before its link was open. With zero invalid actions, mean values were −5.05 / −9.00 / −16.70, efficiency was −1.19 (20 matched pairs), and oracle share was −122.3%. Of six completed ETA tasks, two finished inside the forecast. Mean interval width and waste on those six tasks were 21.67 and 1.33 minutes.
 
