@@ -31,6 +31,8 @@ def failures(row):
     if row["task"] == "eta":
         if not row["scope_complete"]:
             yield "Incomplete scope"
+        if row["eta_waste_minutes"]:
+            yield "ETA waste"
         if row["eta_covered"] is False:
             yield "ETA miss"
         if row["eta"] is None:
@@ -47,10 +49,14 @@ def summarize(rows):
         if group:
             eta[policy] = {"episodes": len(group), "scope_complete": sum(r["scope_complete"] for r in group),
                            "forecasts": sum(r["eta"] is not None for r in group), "reward": mean(r["reward"] for r in group)}
-            for key in ("eta_width", "eta_covered", "eta_bias", "eta_interval_score"):
-                values = [r[key] for r in group if r[key] is not None]
+            for key in ("eta_width", "eta_covered", "eta_bias", "eta_interval_score",
+                        "eta_reference_covered", "eta_waste_minutes"):
+                values = [r[key] for r in group if r[key] is not None and (key != "eta_width" or r["scope_complete"])]
                 eta[policy][key] = mean(values) if values else None
+    oracle_at_60 = budgets.get("oracle", {}).get(60)
+    quality = {p: values[60] / oracle_at_60 for p, values in budgets.items() if 60 in values} if oracle_at_60 else {}
     return {"episodes": len(rows), "budget_value": budgets, "eta": eta,
+            "oracle_fraction_at_60": quality,
             "failure_counts": Counter(f for r in rows for f in failures(r)),
             "efficiency": budget_efficiency(rows) if {15, 60} <= budgets.get("fair", {}).keys() else {}}
 
@@ -95,14 +101,18 @@ def draw(rows, output):
 
     if any(s["eta"] for s in splits.values()):
         fig, axes = figure_columns(splits, "Coverage alone does not make an ETA useful",
-                                   "Intervals with no forecast are excluded. The dashed line shows 80% target coverage.")
+                                   "Coverage uses completed runs. The dashed line shows the 80% target.")
         max_width = max((m["eta_width"] or 0 for s in splits.values() for m in s["eta"].values()), default=0)
         for ax, summary in zip(axes, splits.values()):
             ax.axhline(0.8, color="#7a858d", linestyle="--", lw=1)
             for p, m in summary["eta"].items():
-                if m["eta_width"] is not None:
+                if m["eta_covered"] is not None:
                     x, y = 1 + m["eta_width"], m["eta_covered"]
-                    ax.scatter(x, y, label=p, color=COLORS[p], zorder=3)
+                    # The padded point forecast overlaps the oracle at 100% coverage.
+                    if p == "self-fulfill-eta":
+                        ax.scatter(x, y, label=p, facecolors="none", edgecolors=COLORS[p], s=100, zorder=4)
+                    else:
+                        ax.scatter(x, y, label=p, color=COLORS[p], zorder=3)
             ticks = [n for n in (1, 11, 101, 1001, 10001) if n <= max(30, 1.5 * max_width)]
             ax.set(xscale="log", xlim=(0.72, max(30, 1.5 * max_width)), ylim=(-0.08, 1.08), xticks=ticks,
                    xticklabels=[str(x - 1) for x in ticks], xlabel="Mean interval width (min, log spacing)",

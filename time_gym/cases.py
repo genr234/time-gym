@@ -1,6 +1,7 @@
 """Generate fictional cases. Only the simulator and oracle see the hidden fields."""
 
 from dataclasses import dataclass, replace
+from itertools import product
 from random import Random
 
 DEV_FAMILIES = ("corroborate", "conflict", "chain")
@@ -34,13 +35,12 @@ class Topic:
     sources: tuple[Source, ...]
 
     def route(self, read=()):
-        """Cheapest current record at each stage, in access order."""
-        path = []
-        for stage in range(1, max(s.stage for s in self.sources) + 1):
-            choices = [s for s in self.sources if s.stage == stage and s.status == "current"
-                       and (not s.gated or s.id == path[-1].opens)]
-            path.append(min(choices, key=lambda s: (0 if s.id in read else s.minutes, s.id)))
-        return tuple(path)
+        """Cheapest complete path, in access order."""
+        stages = sorted({s.stage for s in self.sources})
+        choices = ([s for s in self.sources if s.stage == stage and s.status == "current"] for stage in stages)
+        paths = (p for p in product(*choices) if all(not s.gated or (i > 0 and p[i - 1].opens == s.id)
+                                                   for i, s in enumerate(p)))
+        return min(paths, key=lambda p: (sum(s.minutes for s in p if s.id not in read), tuple(s.id for s in p)))
 
 
 @dataclass(frozen=True)
@@ -69,7 +69,7 @@ def generate(family, seed):
         a, reserve, b, c, d = rng.sample(range(10, 99), 5)
         a, reserve, b, c, d = (f"{index + 1:02d}-{n}" for n in (a, reserve, b, c, d))
         branch = rng.choice((b, c))
-        link = {"chain": b, "branch": branch}.get(family)
+        link = b if family in ("chain", "branch") else None
 
         def record(id, stage, low, width, text, *, status="current", gated=False, opens=None):
             return Source(id, stage, (low, low + width), rng.randint(low, low + width),
@@ -77,14 +77,16 @@ def generate(family, seed):
 
         first = 3 if quick else rng.randint(5, 8)
         second = 5 if quick else rng.randint(7, 10)
-        status = "current" if quick else rng.choices(("current", "failed", "archived"), (7, 2, 1))[0]
+        status = "current" if quick or family == "branch" else rng.choices(("current", "failed", "archived"), (7, 2, 1))[0]
         sources = [record(a, 1, first, 2, other if status == "archived" else value,
                           status=status, opens=link),
-                   record(reserve, 1, first + 2, 2, value, opens=link)]
+                   record(reserve, 1, first + 2, 2, value, opens=c if family == "branch" else link)]
         if family == "branch":
+            live = b if quick else branch
             for id in (b, c):
-                sources.append(record(id, 2, second if id == b or quick else second + 2, 2,
-                                      value if id == branch else other, gated=True, opens=d))
+                sources.append(record(id, 2, second, 2, value if id == live else other,
+                                      status="current" if id == live else "archived",
+                                      gated=True, opens=d if id == live else None))
             sources.append(record(d, 3, 1 if quick else rng.randint(3, 6), 1, value, gated=True))
         else:
             sources.append(record(b, 2, second, 2, other if family == "conflict" else value,

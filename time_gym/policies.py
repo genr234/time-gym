@@ -2,7 +2,7 @@
 
 from random import Random
 
-from time_gym.report import next_record
+from time_gym.report import lookup
 
 BUDGET_POLICIES = ("oracle", "fair", "fixed-15", "random", "finish-now", "reread", "save-unread")
 ETA_POLICIES = ("oracle", "fair", "wide-eta", "self-fulfill-eta")
@@ -39,7 +39,7 @@ def visible_work(brief, step, *, budget=None, random=None):
     if budget is not None:
         def upper_cost(topic):
             records = topic["sources"]
-            first = next_record(topic, {})["read_minutes"][1]
+            first = lookup(topic, {})[0]["read_minutes"][1]
             return first + sum(max(s["read_minutes"][1] for s in records if s["stage"] == stage)
                                for stage in {s["stage"] for s in records} - {1})
 
@@ -49,9 +49,8 @@ def visible_work(brief, step, *, budget=None, random=None):
     for topic in topics:
         if budget is not None and not random and elapsed + upper_cost(topic) + 1 > budget:
             continue
-        current = []
-        stages = {s["stage"] for s in topic["sources"]}
-        while record := next_record(topic, seen):
+        record, path = lookup(topic, seen)
+        while record is not None:
             if random and record["stage"] == 1 and not any(s["id"] in seen for s in topic["sources"]):
                 record = random.choice([s for s in topic["sources"] if s["stage"] == 1])
             if budget is not None and elapsed + record["read_minutes"][1] + 1 > budget:
@@ -60,10 +59,9 @@ def visible_work(brief, step, *, budget=None, random=None):
             elapsed = reply["elapsed_minutes"]
             source = reply["source"]
             seen[source["id"]] = source
-            if source["status"] == "current":
-                current.append(source)
-        if len(current) == len(stages):
-            findings.append(finding(current))
+            record, path = lookup(topic, seen)
+        if path:
+            findings.append(finding(path))
     return findings, seen, elapsed
 
 
@@ -71,7 +69,7 @@ def forecast(brief):
     """Catalog-only forecast. Allow some time for a reserve lookup."""
     low = high = 1
     for topic in brief["topics"]:
-        first = next_record(topic, {})
+        first = lookup(topic, {})[0]
         low += first["read_minutes"][0]
         high += first["read_minutes"][1]
         for stage in {s["stage"] for s in topic["sources"]} - {1}:
@@ -87,11 +85,11 @@ def run_policy(episode, policy, sample_seed=0):
     if episode.budget is None:
         low, high = forecast(brief)
         if policy == "oracle":
-            low = high = episode.eta_actual
+            low = high = episode.eta_reference
         elif policy == "wide-eta":
             low, high = 1, 1000
         elif policy == "self-fulfill-eta":
-            low = high = 150
+            low = high = 180
         elif policy != "fair":
             raise ValueError(f"Unknown ETA policy: {policy}")
         step("estimate", {"low": low, "high": high})
@@ -112,8 +110,7 @@ def run_policy(episode, policy, sample_seed=0):
         if findings:
             step("save_draft", {"findings": findings})
     elif policy == "reread":
-        topic = min(brief["topics"], key=lambda t: next_record(t, {})["read_minutes"][1])
-        record = next_record(topic, {})
+        record = min((lookup(t, {})[0] for t in brief["topics"]), key=lambda r: r["read_minutes"][1])
         while not episode.outcome and episode.elapsed + record["read_minutes"][1] <= episode.budget:
             step("read_source", {"source_id": record["id"]})
     elif policy == "save-unread":

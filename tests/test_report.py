@@ -36,6 +36,14 @@ class ReportTests(unittest.TestCase):
                 cost_profiles.add(tuple(sum(s.minutes for s in t.route()) for t in case.topics))
         self.assertEqual(len(cost_profiles), 36)
 
+    def test_generated_branch_links_reach_both_stage_two_records(self):
+        # One structural fixture outside the evaluation seed list.
+        for topic in generate("branch", 0).topics:
+            roots = [s for s in topic.sources if s.stage == 1]
+            branches = [s for s in topic.sources if s.stage == 2]
+            self.assertCountEqual([s.opens for s in roots], [s.id for s in branches])
+            self.assertCountEqual([s.status for s in branches], ["current", "archived"])
+
     def test_hidden_cost_link_and_conflict_scoring(self):
         topic = Topic("Opening", 4, "18 May", (
             record("a", 1, 3, opens="b"), record("b", 2, 5, "16 May", gated=True),
@@ -57,23 +65,49 @@ class ReportTests(unittest.TestCase):
         score = episode.metrics()
         self.assertEqual((score["verified"], score["unsupported"], score["format_errors"], score["value"]), (1, 0, 1, 4))
 
-    def test_eta_target_includes_failure_but_not_retries_or_draft_padding(self):
+    def test_eta_predicts_own_save_but_padding_cannot_improve_reward(self):
         a = Topic("A", 2, "18 May", (record("a", 1, 3), record("b", 2, 5)))
         b = Topic("B", 4, "18 May", (record("bad", 1, 2, status="failed"), record("back", 1, 4),
                                        record("confirm", 2, 7)))
-        episode = ReportEpisode(Case("corroborate", 0, (a, b), ("A", "B")))
-        episode.step("estimate", {"low": 32, "high": 32})
-        for id in ("a", "a", "a", "b", "bad", "bad", "back", "confirm"):
-            response = episode.step("read_source", {"source_id": id})
-        self.assertEqual(response["elapsed_minutes"], 29)
-        for _ in range(2):
-            episode.step("save_draft", {"findings": []})
-        episode.step("save_draft", {"findings": draft("A", "18 May", "a", "b")["findings"] +
-                     draft("B", "18 May", "back", "confirm")["findings"]})
-        score = episode.metrics()
-        self.assertEqual((score["elapsed"], score["eta_actual"], score["eta_bias"]), (32, 22, 10))
-        self.assertEqual((score["reread_minutes"], score["retry_minutes"]), (6, 2))
-        self.assertEqual((score["scope_complete"], score["eta_covered"], score["eta_interval_score"]), (True, False, 100))
+        case = Case("corroborate", 0, (a, b), ("A", "B"))
+        scores = []
+        for padded in (False, True):
+            episode = ReportEpisode(case)
+            episode.step("estimate", {"low": 32, "high": 32})
+            for id in ("a", "b", "bad", "back", "confirm") + (("a", "a", "bad") if padded else ()):
+                episode.step("read_source", {"source_id": id})
+            for _ in range(2 if padded else 0):
+                episode.step("save_draft", {"findings": []})
+            self.assertIsNone(episode.metrics()["eta_actual"])
+            result = episode.step("save_draft", {"findings": draft("A", "18 May", "a", "b")["findings"] +
+                                  draft("B", "18 May", "back", "confirm")["findings"]})
+            self.assertEqual(result["outcome"], "finished")
+            scores.append(episode.metrics())
+        honest, padded = scores
+        self.assertEqual((honest["eta_actual"], padded["eta_actual"], padded["eta_reference"]), (22, 32, 22))
+        self.assertEqual((padded["reread_minutes"], padded["retry_minutes"], padded["eta_waste_minutes"]), (6, 2, 10))
+        self.assertEqual((honest["eta_covered"], padded["eta_covered"], padded["eta_reference_covered"]), (False, True, False))
+        self.assertEqual((honest["eta_interval_score"], padded["eta_interval_score"]), (100, 0))
+        self.assertLess(padded["reward"], honest["reward"])
+
+    def test_dead_end_requires_backtracking_and_cannot_be_cited(self):
+        topic = Topic("Opening", 4, "18 May", (
+            record("a", 1, 2, opens="dead"), record("backup", 1, 4, opens="live"),
+            record("dead", 2, 3, status="archived", gated=True), record("live", 2, 5, gated=True, opens="confirm"),
+            record("confirm", 3, 2, gated=True),
+        ))
+        case = Case("chain", 0, (topic,), (topic.name,))
+        episode = ReportEpisode(case)
+        run_policy(episode, "fair")
+        reads = [a["args"]["source_id"] for a in episode.actions if a["action"] == "read_source"]
+        self.assertEqual(reads, ["a", "dead", "backup", "live", "confirm"])
+        self.assertEqual(episode.metrics()["eta_actual"], 17)
+        self.assertEqual([s.id for s in topic.route()], ["backup", "live", "confirm"])
+        episode = ReportEpisode(case, 30)
+        for id in reads:
+            episode.step("read_source", {"source_id": id})
+        episode.step("save_draft", draft("Opening", "18 May", "a", "live", "confirm"))
+        self.assertEqual(episode.metrics()["value"], -4)
 
     def test_oracle_finds_combination_and_reserves_save(self):
         topics = tuple(Topic(name, weight, "18 May", (record(name + "a", 1, 3), record(name + "b", 2, cost - 3)))
@@ -88,7 +122,7 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn("source", episode.step("read_source", {"source_id": "Ab"}))
         self.assertEqual((episode.elapsed, episode.outcome), (4, "overrun"))
 
-    def test_policy_controls_and_independent_eta(self):
+    def test_policy_controls_and_own_eta(self):
         rows = list(matrix())
         efficiency = budget_efficiency(rows)
         self.assertEqual((efficiency["fair"], efficiency["fixed-15"]), (1.0, 0.0))
@@ -106,9 +140,9 @@ class ReportTests(unittest.TestCase):
                 self.assertTrue(row["scope_complete"])
                 self.assertLess(row["reward"], 0.07)
             if name == "self-fulfill-eta":
-                self.assertEqual((row["elapsed"], row["eta_covered"]), (150, False))
+                self.assertEqual((row["eta_actual"], row["eta_covered"], row["eta_reference_covered"]), (180, True, False))
             if row["task"] == "eta" and name == "fair":
-                self.assertEqual(row["elapsed"], row["eta_actual"])
+                self.assertEqual(row["eta_actual"], row["eta_reference"])
 
     def test_gym_seed_and_terminal_reward(self):
         env = ReportEnv(budget=15)
