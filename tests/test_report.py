@@ -118,6 +118,11 @@ class ReportTests(unittest.TestCase):
             episode.step("read_source", {"source_id": id})
         episode.step("save_draft", draft("Opening", "18 May", "a", "live", "confirm"))
         self.assertEqual(episode.metrics()["value"], -4)
+        episode = ReportEpisode(case, 30)
+        for source_id in ("backup", "live", "confirm"):
+            episode.step("read_source", {"source_id": source_id})
+        episode.step("save_draft", draft("Opening", "18 May", "backup", "live", "confirm"))
+        self.assertEqual(episode.metrics()["verified"], 1)
 
     def test_oracle_finds_combination_and_reserves_save(self):
         topics = tuple(Topic(name, weight, "18 May", (record(name + "a", 1, 3), record(name + "b", 2, cost - 3)))

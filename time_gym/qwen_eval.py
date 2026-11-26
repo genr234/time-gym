@@ -88,7 +88,8 @@ def act(episode, chat, output, *, thinking=False, generation=None):
         return
     result = episode.step(tool, args)
     chat.append({"role": "user", "content": "Tool result: " + json.dumps(result)})
-    if not episode.outcome and len(episode.actions) >= request_cap(episode.budget):
+    cap = episode.request_cap if getattr(episode, "request_cap", None) else request_cap(episode.budget)
+    if not episode.outcome and len(episode.actions) >= cap:
         episode.outcome = "request_limit"
 
 
@@ -103,7 +104,7 @@ def _with_progress(episode, chat):
 
 
 def evaluate(sample, split="dev", policy="base", *, seeds=None, progress=False, thinking=False, budgets=None,
-             sample_seeds=None, limit=None):
+             sample_seeds=None, limit=None, request_cap_override=None):
     """Sample one action per active episode per round. Keep raw tool traces."""
     if split == "dev" and seeds is None:
         seeds = DEV_EVAL_SEEDS
@@ -112,6 +113,7 @@ def evaluate(sample, split="dev", policy="base", *, seeds=None, progress=False, 
         for budget in (*BUDGETS, None) if budgets is None else budgets:
             for seed in SAMPLE_SEEDS if sample_seeds is None else sample_seeds:
                 episode = ReportEpisode(case, budget)
+                episode.request_cap = request_cap_override
                 runs.append((episode, initial_chat(episode, thinking=thinking), seed))
                 if limit is not None and len(runs) >= limit:
                     break

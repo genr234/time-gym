@@ -72,7 +72,8 @@ def inference(adapter_enabled, memory_fraction=0.86, context=8192, *, thinking=F
 @app.function(image=eval_image, gpu=GPU, cpu=4, memory=16384, timeout=EVAL_TIMEOUT, startup_timeout=360,
               retries=0, scaledown_window=2, max_containers=1, volumes={"/cache": cache})
 def baseline(adapter: str = "", split: str = "dev", policy: str = "base", thinking: bool = False, size: str = "",
-             budgets: list[int] | None = None, seeds: list[int] | None = None, limit: int = 0, max_tokens: int = 0):
+             budgets: list[int] | None = None, seeds: list[int] | None = None, limit: int = 0, max_tokens: int = 0,
+             request_cap: int = 0):
     from vllm.lora.request import LoRARequest
     from time_gym.qwen_eval import MODELS, evaluate
 
@@ -91,16 +92,17 @@ def baseline(adapter: str = "", split: str = "dev", policy: str = "base", thinki
 
         return evaluate(texts,
                         split=split, policy=policy, thinking=thinking, budgets=tuple(budgets) if budgets else None,
-                        seeds=tuple(seeds) if seeds else None, limit=limit or None)
+                        seeds=tuple(seeds) if seeds else None, limit=limit or None, request_cap_override=request_cap or None)
     finally:
         print(f"GPU_JOB baseline {GPU} {monotonic() - start:.1f}s", flush=True)
 
 
 @app.local_entrypoint()
 def main(output: str, adapter: str = "", split: str = "dev", policy: str = "", progress_study: bool = False,
-         thinking: bool = False, size: str = "", budget: int = 0, smoke: bool = False, max_tokens: int = 0):
-    if split not in ("dev", "held-out", "fresh"):
-        raise ValueError("Use dev, held-out, or fresh.")
+         thinking: bool = False, size: str = "", budget: int = 0, budgets: str = "", smoke: bool = False,
+         max_tokens: int = 0):
+    if split not in ("dev", "held-out", "fresh", "report"):
+        raise ValueError("Use dev, held-out, fresh, or report.")
     if size and size not in ("4b", "9b"):
         raise ValueError("Use size 4b or 9b.")
     if progress_study:
@@ -115,8 +117,11 @@ def main(output: str, adapter: str = "", split: str = "dev", policy: str = "", p
                 raise ValueError("Use the 4B SFT adapter, or no adapter for untuned 9B.")
             rows = baseline.remote(adapter, "dev", "sft" if adapter else "base", True, size, [15], [0], 1, max_tokens)
         else:
+            selected = [int(item) for item in budgets.split(",")] if budgets else ([budget] if budget else None)
+            if split == "report" and (thinking or max_tokens != 1024 or selected != [15, 60]):
+                raise ValueError("The report split uses thinking off, 1024 tokens, and budgets 15,60.")
             rows = baseline.remote(adapter, split, policy or ("sft" if adapter else "base"), thinking, size,
-                                   [budget] if budget else None, None, 0, max_tokens)
+                                   selected, None, 0, max_tokens, 80 if split == "report" else 0)
     Path(output).write_text("".join(json.dumps(row) + "\n" for row in rows))
     print(f"Wrote {len(rows)} model episodes to {output}")
 

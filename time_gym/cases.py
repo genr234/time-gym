@@ -8,6 +8,7 @@ DEV_FAMILIES = ("corroborate", "conflict", "chain")
 HELD_OUT_FAMILIES = ("branch",)
 DEV_SEEDS = tuple(range(12))
 HELD_OUT_SEEDS = tuple(range(100, 112))
+REPORT_SEEDS = tuple(range(112, 120))
 THINKING_TRAIN_SEEDS = range(20, 80)
 BUDGETS = (15, 30, 60)
 
@@ -121,6 +122,8 @@ def matrix_cases(split, seeds=None):
         families, defaults = HELD_OUT_FAMILIES, HELD_OUT_SEEDS
     elif split == "fresh":
         families, defaults = FRESH_FAMILIES, FRESH_SEEDS
+    elif split == "report":
+        families, defaults = HELD_OUT_FAMILIES, REPORT_SEEDS
     else:
         raise ValueError(f"Unknown split: {split}")
     for family in families:

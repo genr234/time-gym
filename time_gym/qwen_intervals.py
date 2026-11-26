@@ -117,6 +117,30 @@ def value_gap(before, after, *, draws=20_000, seed=41, expected=None):
     }
 
 
+def verified_gain(rows, *, expected):
+    """Paired verified-claim gain from 15 to 60 minutes. Reject incomplete matrices."""
+    keyed = {}
+    for row in rows:
+        key = row["family"], row["seed"], row["sample_seed"], row["budget"]
+        if key in keyed:
+            raise ValueError(f"Duplicate episode: {key}")
+        keyed[key] = row
+    if keyed.keys() != expected:
+        raise ValueError("Need every expected case, sample, and budget, with no extra pairs.")
+    cases = sorted({key[:2] for key in expected})
+    samples = sorted({key[2] for key in expected})
+    gains = np.array([np.mean([keyed[(*case, sample, 60)]["verified"] - keyed[(*case, sample, 15)]["verified"]
+                               for sample in samples]) for case in cases])
+    draws = np.random.default_rng(41).choice(len(cases), size=(20_000, len(cases)), replace=True)
+    point = float(gains.mean())
+    low, high = np.quantile(gains[draws].mean(axis=1), [0.025, 0.975])
+    return {"verified_gain": (point, float(low), float(high)),
+            "unsupported": sum(row["unsupported"] for row in rows),
+            "value60": float(np.mean([row["value"] for row in rows if row["budget"] == 60])),
+            "request_limits": sum(row["outcome"] == "request_limit" for row in rows),
+            "parse_failures": sum(row["outcome"] == "unparseable_output" for row in rows)}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("split", choices=("dev", "held-out", "fresh"))

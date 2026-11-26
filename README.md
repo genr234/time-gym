@@ -337,4 +337,16 @@ uv run --locked python -m time_gym.qwen_intervals fresh --value-gap qwen-9b-base
 
 The first file is base 9B. The second is tuned 4B. The command rejects a missing or duplicate pair. It reports tuned 4B minus base 9B, a 95% interval from resampling whole cases, wins, ties, losses, and parse failures.
 
+### Report-writing comparison
+
+Branch seeds 112–119 were not used in earlier runs. Each checkpoint ran samples 41 and 42 at 15 and 60 minutes: 32 episodes. Thinking was off. Guided JSON was on. The token cap was 1,024. The shared request cap was 80. It did not bind. There were no parse failures and no length stops.
+
+| Checkpoint | Verified-claim gain, 15 to 60 | 95% interval | Unsupported claims | 60-minute value |
+| --- | ---: | ---: | ---: | ---: |
+| Tuned 4B | 0.625 | 0.312 to 0.938 | 5 | 5.00 |
+| Untuned 4B | 0.562 | 0.125 to 0.938 | 10 | 1.56 |
+| Untuned 9B | 0.188 | 0.062 to 0.375 | 4 | 0.12 |
+
+The tuned 4B gain is about 0.06 above the untuned 4B gain. The intervals overlap, so this is not a clear gain from tuning. Reproduce with `--split report --budgets 15,60 --max-tokens 1024` and no thinking flag. The tuned 4B adapter is `/cache/time-gym-sft-v2-text`.
+
 The two smoke jobs and two later scored jobs use the same L40S decorator: timeout 1,500 seconds, startup timeout 360 seconds, retries 0. At $1.95 per hour, one job reserves (1,500 + 360) / 3,600 × $1.95 = $1.0075. Four jobs reserve $4.03. The last billed project GPU total was $17.27. $17.27 plus $4.03 is $21.30, under $25. Recheck the bill before launch. The completed 9B smoke used L40S × 284.2 seconds and is inside the $17.27 if billing has caught up. Do not launch on the old total alone.

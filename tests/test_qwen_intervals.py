@@ -1,6 +1,6 @@
 import unittest
 
-from time_gym.qwen_intervals import paired_intervals, value_gap
+from time_gym.qwen_intervals import paired_intervals, value_gap, verified_gain
 
 
 class QwenIntervalTests(unittest.TestCase):
@@ -51,3 +51,10 @@ class QwenIntervalTests(unittest.TestCase):
         expected = {("detour", seed, sample) for seed in (200, 201) for sample in (41, 42)}
         with self.assertRaisesRegex(ValueError, "expected case"):
             value_gap(rows(0)[:-1], rows(2)[:-1], expected=expected)
+        expected_matrix = {("branch", seed, 41, budget) for seed in (112, 113) for budget in (15, 60)}
+        synthetic = [{"family": "branch", "seed": seed, "sample_seed": 41, "budget": budget,
+                      "verified": 1 if budget == 15 else 3, "unsupported": 0, "value": budget,
+                      "outcome": "finished"} for seed, budget in ((s, b) for s in (112, 113) for b in (15, 60))]
+        self.assertEqual(verified_gain(synthetic, expected=expected_matrix)["verified_gain"], (2, 2, 2))
+        with self.assertRaisesRegex(ValueError, "expected case"):
+            verified_gain(synthetic[:-1], expected=expected_matrix)
