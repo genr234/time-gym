@@ -99,13 +99,13 @@ def _with_progress(episode, chat):
                         "\n\nSearch progress (records already read):\n" + "\n".join(records)}]
 
 
-def evaluate(sample, split="dev", policy="base", *, seeds=None, progress=False, thinking=False):
+def evaluate(sample, split="dev", policy="base", *, seeds=None, progress=False, thinking=False, budgets=None):
     """Sample one action per active episode per round. Keep raw tool traces."""
     if split == "dev" and seeds is None:
         seeds = DEV_EVAL_SEEDS
     runs = []
     for case in matrix_cases(split, seeds):
-        for budget in (*BUDGETS, None):
+        for budget in (*BUDGETS, None) if budgets is None else budgets:
             for seed in SAMPLE_SEEDS:
                 episode = ReportEpisode(case, budget)
                 runs.append((episode, initial_chat(episode, thinking=thinking), seed))

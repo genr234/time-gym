@@ -5,7 +5,7 @@ import unittest
 from time_gym.cases import FRESH_SEEDS, generate
 from time_gym.policies import run_policy
 from time_gym.qwen_eval import MODELS, PROGRESS_EVAL_SEEDS, SIZE_ADAPTERS, act, action_schema, evaluate, initial_chat
-from time_gym.size_compare import arm, arms, mock_scores
+from time_gym.size_compare import arm, arms, mock_scores, pilot_episodes, pilot_plan
 from time_gym.qwen_grpo import advantages, rollout_group, training_tasks
 from time_gym.qwen_sft import fair_examples
 from time_gym.report import ReportEpisode
@@ -69,6 +69,13 @@ class QwenEvaluationTests(unittest.TestCase):
         self.assertEqual(arm("4b", "base")["adapter"], "")
         rows = evaluate(lambda chats, seeds: ['{"tool":"finish","args":{}}'] * len(chats), split="fresh")
         self.assertEqual({(row["family"], row["seed"]) for row in rows}, {("detour", seed) for seed in FRESH_SEEDS})
+        plan = pilot_plan()
+        self.assertEqual([(item["model"], item["adapter"], item["budget"]) for item in plan],
+                         [("Qwen/Qwen3.5-4B", "/cache/time-gym-sft-v2-text", 60),
+                          ("Qwen/Qwen3.5-9B", "", 60)])
+        self.assertEqual(pilot_episodes(), [(row["family"], row["seed"], row["budget"], row["sample_seed"])
+                                            for row in evaluate(lambda chats, seeds: ['{"tool":"finish","args":{}}'] * len(chats),
+                                                                split="fresh", budgets=(60,))])
 
     def test_action_schema_pairs_each_allowed_tool_with_its_arguments(self):
         for eta in (False, True):

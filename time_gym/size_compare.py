@@ -2,7 +2,7 @@
 
 import json
 
-from time_gym.cases import DEV_FAMILIES, FRESH_SEEDS, HELD_OUT_FAMILIES, generate
+from time_gym.cases import DEV_FAMILIES, FRESH_SEEDS, HELD_OUT_FAMILIES, generate, matrix_cases
 from time_gym.policies import forecast, run_policy
 from time_gym.qwen_eval import DEV_EVAL_SEEDS, MODELS, SAMPLE_SEEDS, SIZE_ADAPTERS, THINKING_TEMPERATURE
 from time_gym.qwen_intervals import paired_intervals
@@ -81,6 +81,25 @@ def mock_scores(size, role):
                         metrics["value"] = 0
                     rows.append({"policy": f"{size}-{role}", "split": "dev", "sample_seed": sample, **metrics})
     return rows
+
+
+PILOT_ADAPTER = "/cache/time-gym-sft-v2-text"
+SMOKE_SEED = (200,)
+
+
+def pilot_plan():
+    """Two deployed checkpoints, one budget, one fresh split. No training."""
+    common = {"split": "fresh", "seeds": FRESH_SEEDS, "budget": 60, "thinking": True,
+              "temperature": THINKING_TEMPERATURE, "max_tokens": 1024, "guided_json": False}
+    return [
+        {**common, "arm": "4b-sft-v2", "model": MODELS["4b"][0], "revision": MODELS["4b"][1], "adapter": PILOT_ADAPTER},
+        {**common, "arm": "9b-base", "model": MODELS["9b"][0], "revision": MODELS["9b"][1], "adapter": ""},
+    ]
+
+
+def pilot_episodes():
+    return [(case.family, case.seed, 60, sample) for case in matrix_cases("fresh")
+            for sample in SAMPLE_SEEDS]
 
 
 def main():

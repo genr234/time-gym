@@ -65,7 +65,8 @@ def inference(adapter_enabled, memory_fraction=0.86, context=8192, *, thinking=F
 
 @app.function(image=eval_image, gpu=GPU, cpu=4, memory=16384, timeout=EVAL_TIMEOUT, startup_timeout=360,
               retries=0, scaledown_window=2, max_containers=1, volumes={"/cache": cache})
-def baseline(adapter: str = "", split: str = "dev", policy: str = "base", thinking: bool = False, size: str = ""):
+def baseline(adapter: str = "", split: str = "dev", policy: str = "base", thinking: bool = False, size: str = "",
+             budgets: list[int] | None = None):
     from vllm.lora.request import LoRARequest
     from time_gym.qwen_eval import MODELS, evaluate
 
@@ -76,14 +77,14 @@ def baseline(adapter: str = "", split: str = "dev", policy: str = "base", thinki
                            thinking=thinking, model=model)
         lora = LoRARequest(policy, 1, adapter) if adapter else None
         return evaluate(lambda chats, seeds: [r.outputs[0].text for r in sample(chats, seeds, lora)],
-                        split=split, policy=policy, thinking=thinking)
+                        split=split, policy=policy, thinking=thinking, budgets=tuple(budgets) if budgets else None)
     finally:
         print(f"GPU_JOB baseline {GPU} {monotonic() - start:.1f}s", flush=True)
 
 
 @app.local_entrypoint()
 def main(output: str, adapter: str = "", split: str = "dev", policy: str = "", progress_study: bool = False,
-         thinking: bool = False, size: str = ""):
+         thinking: bool = False, size: str = "", budget: int = 0):
     if split not in ("dev", "held-out", "fresh"):
         raise ValueError("Use dev, held-out, or fresh.")
     if size and size not in ("4b", "9b"):
@@ -93,7 +94,8 @@ def main(output: str, adapter: str = "", split: str = "dev", policy: str = "", p
             raise ValueError("The progress study uses the fixed SFT adapter and development cases.")
         rows = compare_progress.remote()
     else:
-        rows = baseline.remote(adapter, split, policy or ("sft" if adapter else "base"), thinking, size)
+        rows = baseline.remote(adapter, split, policy or ("sft" if adapter else "base"), thinking, size,
+                             [budget] if budget else None)
     Path(output).write_text("".join(json.dumps(row) + "\n" for row in rows))
     print(f"Wrote {len(rows)} model episodes to {output}")
 

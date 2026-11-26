@@ -316,4 +316,14 @@ uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py::main --th
 uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py::main --thinking --size 9b --split fresh --adapter /cache/time-gym-sft-v3-9b --output qwen-9b-sft-fresh.jsonl
 ```
 
-Do not run these yet. Two corrected SFT jobs and four fresh evaluations are six H100 jobs. At $3.95 per hour, a 6,000-second timeout plus 360 seconds of startup is about $6.98 per job, or $41.88. Current billed GPU spend is $11.34, and the active GRPO job has already billed about $4.78 of H100 time inside that total. $11.34 plus $41.88 is $53.22, above the $25 cap. Even the earlier three-job estimate of $20.94 plus $11.34 is $32.28, also above $25. A launch needs a higher cap or fewer jobs. This checkout has not loaded 9B on a GPU.
+Do not run the six-job plan. It is above the cap.
+
+The smaller pilot does not train. It compares two checkpoints that already exist: tuned 4B at `/cache/time-gym-sft-v2-text`, trained before the ETA teacher fix, and untuned 9B at revision `c202236235762e1c871ad0ccb60c8ee5ba337b9a`. Both use detour seeds 200–211, sample seeds 41 and 42, a 60-minute budget, thinking on, temperature 0.6, a 1,024-token limit, and no guided JSON. The gap is between these two deployments. It is not a pure size effect and not a test of the ETA fix.
+
+```sh
+uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py::main --thinking --size 9b --split fresh --budget 60 --output qwen-9b-smoke.jsonl
+uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py::main --thinking --size 4b --split fresh --budget 60 --adapter /cache/time-gym-sft-v2-text --output qwen-4b-sft-v2-fresh-60.jsonl
+uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py::main --thinking --size 9b --split fresh --budget 60 --output qwen-9b-base-fresh-60.jsonl
+```
+
+The first command is the smoke check. Stop it after one completed episode if 9B loads. The decorator is L40S, timeout 1,500 seconds, startup timeout 360 seconds, and retries 0. At $1.95 per hour, one job reserves about $1.01. Three jobs reserve about $3.03. Modal billed **$17.27** of project GPU spend after GRPO stopped, not the earlier $11.34. $17.27 plus $3.03 is $20.30, under $25, with about $4.70 left. Do not add another job without a new bill check. This checkout has not loaded 9B on a GPU.
