@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+from time_gym.cases import FRESH_SEEDS
 from time_gym.qwen_eval import DEV_EVAL_SEEDS, SAMPLE_SEEDS
 from time_gym.report_baseline import matrix
 
@@ -78,7 +79,7 @@ def paired_intervals(before, after, fair, oracle, *, draws=20_000, seed=41, incl
     return dict(zip(names, zip(point.tolist(), low.tolist(), high.tolist())))
 
 
-def value_gap(before, after, *, draws=20_000, seed=41):
+def value_gap(before, after, *, draws=20_000, seed=41, expected=None):
     """Paired 60-minute value gap. Resample whole cases. Reject incomplete pairs."""
     def index(rows):
         result = {}
@@ -92,6 +93,8 @@ def value_gap(before, after, *, draws=20_000, seed=41):
         return result
 
     left, right = index(before), index(after)
+    if expected is not None and (left.keys() != expected or right.keys() != expected):
+        raise ValueError("Need every expected case and sample, with no extra pairs.")
     if not left or left.keys() != right.keys():
         raise ValueError("Need the same complete case and sample pairs.")
     cases = sorted({key[:2] for key in left})
@@ -116,21 +119,25 @@ def value_gap(before, after, *, draws=20_000, seed=41):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("split", choices=("dev", "held-out"))
+    parser.add_argument("split", choices=("dev", "held-out", "fresh"))
     parser.add_argument("--include-traces", action="store_true", help="Include ETA and re-read intervals.")
     parser.add_argument("--value-gap", action="store_true", help="Report a 60-minute paired value gap.")
     parser.add_argument("traces", nargs="+", type=Path, help="Base, SFT, and optionally GRPO JSONL, in that order.")
     args = parser.parse_args()
+    if args.split == "fresh" and not args.value_gap:
+        parser.error("The fresh split is only for the 60-minute value gap.")
+    if args.value_gap and args.split == "fresh":
+        if len(args.traces) != 2:
+            parser.error("The value gap needs the base file, then the tuned file.")
+        models = [[json.loads(line) for line in path.read_text().splitlines()] for path in args.traces]
+        expected = {("detour", seed, sample) for seed in FRESH_SEEDS for sample in SAMPLE_SEEDS}
+        print(value_gap(models[0], models[1], expected=expected))
+        return
     seeds = DEV_EVAL_SEEDS if args.split == "dev" else None
     refs = list(matrix(args.split, seeds=seeds, task="budget", samples=len(SAMPLE_SEEDS), sample_seed=SAMPLE_SEEDS[0]))
     fair, oracle = ([r for r in refs if r["policy"] == policy] for policy in ("fair", "oracle"))
     models = [[json.loads(line) for line in path.read_text().splitlines()] for path in args.traces]
     labels = ["base", "sft", "grpo"][:len(models)]
-    if args.value_gap:
-        if len(models) != 2:
-            parser.error("The value gap needs the base file, then the tuned file.")
-        print(value_gap(models[0], models[1]))
-        return
     if len(models) not in (2, 3) or any(
         not rows or any(r["policy"] != label or r["split"] != args.split for r in rows)
         for rows, label in zip(models, labels)

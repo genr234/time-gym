@@ -48,3 +48,6 @@ class QwenIntervalTests(unittest.TestCase):
         self.assertEqual((gap["wins"], gap["ties"], gap["losses"], gap["parse_failures"]), (4, 0, 0, {"before": 0, "after": 0}))
         with self.assertRaisesRegex(ValueError, "complete case"):
             value_gap(rows(0)[:-1], rows(2))
+        expected = {("detour", seed, sample) for seed in (200, 201) for sample in (41, 42)}
+        with self.assertRaisesRegex(ValueError, "expected case"):
+            value_gap(rows(0)[:-1], rows(2)[:-1], expected=expected)
