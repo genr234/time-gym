@@ -73,6 +73,13 @@ class QwenEvaluationTests(unittest.TestCase):
         self.assertEqual([(item["model"], item["adapter"], item["budget"]) for item in plan],
                          [("Qwen/Qwen3.5-4B", "/cache/time-gym-sft-v2-text", 60),
                           ("Qwen/Qwen3.5-9B", "", 60)])
+        def sample(chats, seeds):
+            return [("x" * 20, {"tokens": 4096, "finish_reason": "length"})] * len(chats)
+
+        stopped = evaluate(sample, seeds=(0,), budgets=(15,), sample_seeds=(41,), limit=1, thinking=True)
+        self.assertEqual(stopped[0]["outcome"], "unparseable_output")
+        self.assertEqual(stopped[0]["messages"][-1]["finish_reason"], "length")
+        self.assertEqual(stopped[0]["messages"][-1]["generation_tokens"], 4096)
         smoke = evaluate(lambda chats, seeds: ['{"tool":"finish","args":{}}'] * len(chats),
                          seeds=(0,), budgets=(15,), sample_seeds=(41,), limit=1, thinking=True)
         self.assertEqual([(row["split"], row["family"], row["seed"], row["budget"], row["sample_seed"]) for row in smoke],

@@ -38,7 +38,8 @@ def check_image():
         print(f"CPU_JOB check_image 2vCPU 4GiB {monotonic() - start:.1f}s", flush=True)
 
 
-def inference(adapter_enabled, memory_fraction=0.86, context=8192, *, thinking=False, model=None):
+def inference(adapter_enabled, memory_fraction=0.86, context=8192, *, thinking=False, model=None, max_tokens=None,
+              diagnostics=False):
     from vllm import LLM, SamplingParams
     from vllm.sampling_params import StructuredOutputsParams
     from time_gym.qwen_eval import MODEL, REVISION, THINKING_TEMPERATURE, action_schema
@@ -53,12 +54,17 @@ def inference(adapter_enabled, memory_fraction=0.86, context=8192, *, thinking=F
     def sample(chats, seeds, lora):
         prompts = tokenizer.apply_chat_template(chats, tokenize=False, add_generation_prompt=True,
                                                 enable_thinking=thinking)
+        limit = max_tokens if max_tokens is not None else (1024 if thinking else 384)
         params = [SamplingParams(temperature=THINKING_TEMPERATURE if thinking else 0.7, top_p=1.0 if thinking else 0.8,
-                                 top_k=-1 if thinking else 20, max_tokens=1024 if thinking else 384, seed=seed,
+                                 top_k=-1 if thinking else 20, max_tokens=limit, seed=seed,
                                  skip_special_tokens=not thinking,
                                  structured_outputs=None if thinking else StructuredOutputsParams(json=schemas[chat[1]["content"].startswith("ETA task:")]))
                   for chat, seed in zip(chats, seeds, strict=True)]
-        return engine.generate(prompts, params, use_tqdm=False, lora_request=lora)
+        items = engine.generate(prompts, params, use_tqdm=False, lora_request=lora)
+        if not diagnostics:
+            return items
+        return [({"tokens": len(item.outputs[0].token_ids), "finish_reason": item.outputs[0].finish_reason}, item)
+                for item in items]
 
     return sample
 
@@ -66,7 +72,7 @@ def inference(adapter_enabled, memory_fraction=0.86, context=8192, *, thinking=F
 @app.function(image=eval_image, gpu=GPU, cpu=4, memory=16384, timeout=EVAL_TIMEOUT, startup_timeout=360,
               retries=0, scaledown_window=2, max_containers=1, volumes={"/cache": cache})
 def baseline(adapter: str = "", split: str = "dev", policy: str = "base", thinking: bool = False, size: str = "",
-             budgets: list[int] | None = None, seeds: list[int] | None = None, limit: int = 0):
+             budgets: list[int] | None = None, seeds: list[int] | None = None, limit: int = 0, max_tokens: int = 0):
     from vllm.lora.request import LoRARequest
     from time_gym.qwen_eval import MODELS, evaluate
 
@@ -74,9 +80,16 @@ def baseline(adapter: str = "", split: str = "dev", policy: str = "base", thinki
     try:
         model = MODELS[size] if size else None
         sample = inference(bool(adapter), context=65536 if thinking or split == "fresh" else (32768 if split == "held-out" else 8192),
-                           thinking=thinking, model=model)
+                           thinking=thinking, model=model, max_tokens=max_tokens or None, diagnostics=bool(max_tokens))
         lora = LoRARequest(policy, 1, adapter) if adapter else None
-        return evaluate(lambda chats, seeds: [r.outputs[0].text for r in sample(chats, seeds, lora)],
+
+        def texts(chats, seeds):
+            rows = sample(chats, seeds, lora)
+            if max_tokens:
+                return [(item.outputs[0].text, meta) for meta, item in rows]
+            return [item.outputs[0].text for item in rows]
+
+        return evaluate(texts,
                         split=split, policy=policy, thinking=thinking, budgets=tuple(budgets) if budgets else None,
                         seeds=tuple(seeds) if seeds else None, limit=limit or None)
     finally:
@@ -85,7 +98,7 @@ def baseline(adapter: str = "", split: str = "dev", policy: str = "base", thinki
 
 @app.local_entrypoint()
 def main(output: str, adapter: str = "", split: str = "dev", policy: str = "", progress_study: bool = False,
-         thinking: bool = False, size: str = "", budget: int = 0, smoke: bool = False):
+         thinking: bool = False, size: str = "", budget: int = 0, smoke: bool = False, max_tokens: int = 0):
     if split not in ("dev", "held-out", "fresh"):
         raise ValueError("Use dev, held-out, or fresh.")
     if size and size not in ("4b", "9b"):
@@ -96,12 +109,14 @@ def main(output: str, adapter: str = "", split: str = "dev", policy: str = "", p
         rows = compare_progress.remote()
     else:
         if smoke:
-            if size != "9b" or adapter or budget or split != "dev":
-                raise ValueError("The smoke check is one untuned 9B episode on development seed 0 at 15 minutes.")
-            rows = baseline.remote("", "dev", "base", True, "9b", [15], [0], 1)
+            if size not in ("4b", "9b") or budget or split != "dev" or max_tokens != 4096:
+                raise ValueError("The long smoke check uses size 4b or 9b, 4096 tokens, and development seed 0.")
+            if (size == "9b") != (adapter == ""):
+                raise ValueError("Use the 4B SFT adapter, or no adapter for untuned 9B.")
+            rows = baseline.remote(adapter, "dev", "sft" if adapter else "base", True, size, [15], [0], 1, max_tokens)
         else:
             rows = baseline.remote(adapter, split, policy or ("sft" if adapter else "base"), thinking, size,
-                                   [budget] if budget else None)
+                                   [budget] if budget else None, None, 0, max_tokens)
     Path(output).write_text("".join(json.dumps(row) + "\n" for row in rows))
     print(f"Wrote {len(rows)} model episodes to {output}")
 

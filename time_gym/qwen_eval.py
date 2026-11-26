@@ -66,8 +66,11 @@ def action_schema(*, eta):
     return {"anyOf": [obj(tool={"const": name}, args=args) for name, args in actions.items()]}
 
 
-def act(episode, chat, output, *, thinking=False):
-    chat.append({"role": "assistant", "content": output})
+def act(episode, chat, output, *, thinking=False, generation=None):
+    record = {"role": "assistant", "content": output}
+    if generation:
+        record.update(generation_tokens=generation.get("tokens"), finish_reason=generation.get("finish_reason"))
+    chat.append(record)
     try:
         text = output.strip()
         if thinking:
@@ -122,7 +125,8 @@ def evaluate(sample, split="dev", policy="base", *, seeds=None, progress=False, 
         outputs = sample([_with_progress(episode, chat) if progress else chat for episode, chat, _ in pending],
                          [seed * 1000 + turn for _, _, seed in pending])
         for (episode, chat, _), output in zip(pending, outputs, strict=True):
-            act(episode, chat, output, thinking=thinking)
+            text, generation = output if isinstance(output, tuple) else (output, None)
+            act(episode, chat, text, thinking=thinking, generation=generation)
         pending = [(e, h, s) for e, h, s in pending if not e.outcome]
         turn += 1
     return [{"policy": policy, "sample_seed": seed, **episode.metrics(), "draft": episode.draft,
