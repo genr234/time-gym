@@ -2,10 +2,10 @@ import json
 from types import SimpleNamespace
 import unittest
 
-from time_gym.cases import generate
+from time_gym.cases import FRESH_SEEDS, generate
 from time_gym.policies import run_policy
-from time_gym.qwen_eval import MODELS, PROGRESS_EVAL_SEEDS, act, action_schema, evaluate, initial_chat
-from time_gym.size_compare import arms, mock_scores
+from time_gym.qwen_eval import MODELS, PROGRESS_EVAL_SEEDS, SIZE_ADAPTERS, act, action_schema, evaluate, initial_chat
+from time_gym.size_compare import arm, arms, mock_scores
 from time_gym.qwen_grpo import advantages, rollout_group, training_tasks
 from time_gym.qwen_sft import fair_examples
 from time_gym.report import ReportEpisode
@@ -63,6 +63,12 @@ class QwenEvaluationTests(unittest.TestCase):
         self.assertTrue(all(item["args"]["high"] > item["args"]["low"] for item in estimates))
         self.assertEqual({arm["model"] for arm in arms()}, {model for model, _ in MODELS.values()})
         self.assertEqual(len(mock_scores("4b", "sft")), len(mock_scores("9b", "base")))
+        selected = arm("9b", "sft")
+        self.assertEqual((selected["model"], selected["revision"], selected["adapter"], tuple(selected["seeds"])),
+                         (*MODELS["9b"], SIZE_ADAPTERS["9b"], FRESH_SEEDS))
+        self.assertEqual(arm("4b", "base")["adapter"], "")
+        rows = evaluate(lambda chats, seeds: ['{"tool":"finish","args":{}}'] * len(chats), split="fresh")
+        self.assertEqual({(row["family"], row["seed"]) for row in rows}, {("detour", seed) for seed in FRESH_SEEDS})
 
     def test_action_schema_pairs_each_allowed_tool_with_its_arguments(self):
         for eta in (False, True):

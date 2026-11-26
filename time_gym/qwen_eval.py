@@ -11,6 +11,7 @@ MODELS = {
     "4b": ("Qwen/Qwen3.5-4B", "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"),
     "9b": ("Qwen/Qwen3.5-9B", "c202236235762e1c871ad0ccb60c8ee5ba337b9a"),
 }
+SIZE_ADAPTERS = {"4b": "/cache/time-gym-sft-v3-4b", "9b": "/cache/time-gym-sft-v3-9b"}
 MODEL, REVISION = MODELS["4b"]
 SAMPLE_SEEDS = (41, 42)
 DEV_EVAL_SEEDS = (0, 1, 2, 3)

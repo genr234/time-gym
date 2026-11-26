@@ -305,4 +305,15 @@ uv run --locked python -m time_gym.size_compare
 
 That command is local. It prints the forecast table and a mocked pairing. It does not call Modal.
 
-A later GPU job should stay under $7.50. At the H100 list rate of $3.95 per hour, a 6,000-second timeout plus 360 seconds of startup is about $6.98. One 9B evaluation is larger than the 4B L40S run (339 seconds, $0.17). Budget three H100 jobs: one 9B SFT and two evaluations. Three jobs at the $6.98 ceiling are $20.94, which would pass the $25 project cap if added to the current $11.34. Stop before launch if billed spend plus that ceiling exceeds $25. No GPU compatibility claim is included.
+The live commands are opt-in. An empty `--size` keeps the old 4B checkpoint and adapter. `--size 4b` or `--size 9b` selects the pinned model and a new adapter path. `--split fresh` uses detour seeds 200–211. It does not reuse branch 100–111.
+
+```sh
+uvx --with-editable . --from modal==1.6.4 modal run modal_sft.py::train_thinking --size 4b
+uvx --with-editable . --from modal==1.6.4 modal run modal_sft.py::train_thinking --size 9b
+uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py::main --thinking --size 4b --split fresh --output qwen-4b-base-fresh.jsonl
+uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py::main --thinking --size 4b --split fresh --adapter /cache/time-gym-sft-v3-4b --output qwen-4b-sft-fresh.jsonl
+uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py::main --thinking --size 9b --split fresh --output qwen-9b-base-fresh.jsonl
+uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py::main --thinking --size 9b --split fresh --adapter /cache/time-gym-sft-v3-9b --output qwen-9b-sft-fresh.jsonl
+```
+
+Do not run these yet. Two corrected SFT jobs and four fresh evaluations are six H100 jobs. At $3.95 per hour, a 6,000-second timeout plus 360 seconds of startup is about $6.98 per job, or $41.88. Current billed GPU spend is $11.34, and the active GRPO job has already billed about $4.78 of H100 time inside that total. $11.34 plus $41.88 is $53.22, above the $25 cap. Even the earlier three-job estimate of $20.94 plus $11.34 is $32.28, also above $25. A launch needs a higher cap or fewer jobs. This checkout has not loaded 9B on a GPU.

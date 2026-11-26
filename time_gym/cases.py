@@ -109,12 +109,18 @@ def generate(family, seed):
     return Case(family, seed, tuple(topics), targets)
 
 
+FRESH_FAMILIES = ("detour",)
+FRESH_SEEDS = tuple(range(200, 212))
+
+
 def matrix_cases(split, seeds=None):
     """Use only development families unless evaluation is explicitly selected."""
     if split == "dev":
         families, defaults = DEV_FAMILIES, DEV_SEEDS
     elif split == "held-out":
         families, defaults = HELD_OUT_FAMILIES, HELD_OUT_SEEDS
+    elif split == "fresh":
+        families, defaults = FRESH_FAMILIES, FRESH_SEEDS
     else:
         raise ValueError(f"Unknown split: {split}")
     for family in families:

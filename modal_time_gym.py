@@ -38,12 +38,13 @@ def check_image():
         print(f"CPU_JOB check_image 2vCPU 4GiB {monotonic() - start:.1f}s", flush=True)
 
 
-def inference(adapter_enabled, memory_fraction=0.86, context=8192, *, thinking=False):
+def inference(adapter_enabled, memory_fraction=0.86, context=8192, *, thinking=False, model=None):
     from vllm import LLM, SamplingParams
     from vllm.sampling_params import StructuredOutputsParams
     from time_gym.qwen_eval import MODEL, REVISION, THINKING_TEMPERATURE, action_schema
 
-    engine = LLM(model=MODEL, revision=REVISION, language_model_only=True, dtype="bfloat16",
+    name, revision = model or (MODEL, REVISION)
+    engine = LLM(model=name, revision=revision, language_model_only=True, dtype="bfloat16",
                  max_model_len=context, gpu_memory_utilization=memory_fraction, enforce_eager=True,
                  enable_lora=adapter_enabled)
     tokenizer = engine.get_tokenizer()
@@ -64,14 +65,15 @@ def inference(adapter_enabled, memory_fraction=0.86, context=8192, *, thinking=F
 
 @app.function(image=eval_image, gpu=GPU, cpu=4, memory=16384, timeout=EVAL_TIMEOUT, startup_timeout=360,
               retries=0, scaledown_window=2, max_containers=1, volumes={"/cache": cache})
-def baseline(adapter: str = "", split: str = "dev", policy: str = "base", thinking: bool = False):
+def baseline(adapter: str = "", split: str = "dev", policy: str = "base", thinking: bool = False, size: str = ""):
     from vllm.lora.request import LoRARequest
-    from time_gym.qwen_eval import evaluate
+    from time_gym.qwen_eval import MODELS, evaluate
 
     start = monotonic()
     try:
-        sample = inference(bool(adapter), context=65536 if thinking else (32768 if split == "held-out" else 8192),
-                           thinking=thinking)
+        model = MODELS[size] if size else None
+        sample = inference(bool(adapter), context=65536 if thinking or split == "fresh" else (32768 if split == "held-out" else 8192),
+                           thinking=thinking, model=model)
         lora = LoRARequest(policy, 1, adapter) if adapter else None
         return evaluate(lambda chats, seeds: [r.outputs[0].text for r in sample(chats, seeds, lora)],
                         split=split, policy=policy, thinking=thinking)
@@ -81,15 +83,17 @@ def baseline(adapter: str = "", split: str = "dev", policy: str = "base", thinki
 
 @app.local_entrypoint()
 def main(output: str, adapter: str = "", split: str = "dev", policy: str = "", progress_study: bool = False,
-         thinking: bool = False):
-    if split not in ("dev", "held-out"):
-        raise ValueError("Use dev or held-out.")
+         thinking: bool = False, size: str = ""):
+    if split not in ("dev", "held-out", "fresh"):
+        raise ValueError("Use dev, held-out, or fresh.")
+    if size and size not in ("4b", "9b"):
+        raise ValueError("Use size 4b or 9b.")
     if progress_study:
         if adapter or split != "dev" or policy or thinking:
             raise ValueError("The progress study uses the fixed SFT adapter and development cases.")
         rows = compare_progress.remote()
     else:
-        rows = baseline.remote(adapter, split, policy or ("sft" if adapter else "base"), thinking)
+        rows = baseline.remote(adapter, split, policy or ("sft" if adapter else "base"), thinking, size)
     Path(output).write_text("".join(json.dumps(row) + "\n" for row in rows))
     print(f"Wrote {len(rows)} model episodes to {output}")
 
@@ -103,7 +107,7 @@ rl_image = vllm_image.run_commands(
 ).add_local_python_source("time_gym")
 SFT_ADAPTER = "/cache/time-gym-sft-v1"
 RL_ADAPTER = "/cache/time-gym-grpo-v1"
-THINKING_SFT_ADAPTER = "/cache/time-gym-sft-v2"
+THINKING_SFT_ADAPTER = "/cache/time-gym-sft-v2-text"
 THINKING_RL_ADAPTER = "/cache/time-gym-grpo-v2"
 
 
@@ -127,10 +131,11 @@ def compare_progress():
         print(f"GPU_JOB compare_progress {GPU} {monotonic() - start:.1f}s", flush=True)
 
 
-@app.function(image=rl_image, gpu="H100", cpu=8, memory=32768, timeout=5400, startup_timeout=360,
+@app.function(image=rl_image, gpu="H100", cpu=8, memory=32768, timeout=6000, startup_timeout=360,
               retries=0, scaledown_window=2, max_containers=1, volumes={"/cache": cache})
 def grpo(sft_reward: float, sft_value60: float, thinking: bool = False):
     from random import Random
+    from shutil import copytree
     from statistics import mean
     from subprocess import PIPE, Popen
     from tempfile import TemporaryDirectory
@@ -150,6 +155,7 @@ def grpo(sft_reward: float, sft_value60: float, thinking: bool = False):
         rl_adapter = THINKING_RL_ADAPTER if thinking else RL_ADAPTER
         limit = 100 if thinking else 30
         reward, value60 = sft_reward, sft_value60
+        best = None
         with TemporaryDirectory() as directory:
             work = Path(directory)
             adapter = str(work / "adapter")
@@ -172,8 +178,8 @@ def grpo(sft_reward: float, sft_value60: float, thinking: bool = False):
                             raise RuntimeError(f"GRPO trainer exited with code {worker.returncode}.")
                         sleep(0.25)
                     print(f"GRPO step {step}: terminal reward {mean(m['reward'] for m, _ in group):.4f}", flush=True)
-                    time_limit = thinking and monotonic() - start >= 3900  # Reserve time for the full dev check.
-                    if step % 15 and step != limit and not time_limit:
+                    time_limit = thinking and monotonic() - start >= 4800  # Reserve time for the full dev check.
+                    if step % (25 if thinking else 15) and step != limit and not time_limit:
                         continue
                     lora = LoRARequest(f"check-{step}", step + 1000, adapter)
                     rows = evaluate(lambda chats, seeds: [r.outputs[0].text for r in sample(chats, seeds, lora)],
@@ -187,11 +193,20 @@ def grpo(sft_reward: float, sft_value60: float, thinking: bool = False):
                           f"unsupported={sum(r['unsupported'] for r in rows)}, "
                           f"eta_waste={sum(r['eta_waste_minutes'] or 0 for r in rows)}", flush=True)
                     if new_reward > reward and new_value <= value60:
-                        return {"step": step, "stopped": True, "rows": rows}
+                        if not thinking:
+                            return {"step": step, "stopped": True, "rows": rows}
+                        print(f"Rejected step {step}: reward rose without a value gain.", flush=True)
+                        break
                     reward, value60 = new_reward, new_value
+                    if thinking and (best is None or new_value > best[0]):
+                        best = new_value, step, rows
+                        copytree(adapter, rl_adapter, dirs_exist_ok=True)
+                        cache.commit()
                     if time_limit:
                         break
-                from shutil import copytree
+                if thinking:
+                    return {"step": step, "selected_step": best[1] if best else None,
+                            "stopped": step < limit, "rows": best[2] if best else []}
                 copytree(adapter, rl_adapter)
                 cache.commit()
                 return {"step": step, "stopped": False, "rows": rows}
@@ -203,7 +218,7 @@ def grpo(sft_reward: float, sft_value60: float, thinking: bool = False):
 
 
 @app.local_entrypoint()
-def train_rl(sft_results: str, output: str, thinking: bool = False, base_results: str = ""):
+def train_rl(sft_results: str, output: str, thinking: bool = False):
     from statistics import mean
 
     def dev_results(path, policy):
@@ -215,11 +230,7 @@ def train_rl(sft_results: str, output: str, thinking: bool = False, base_results
         return parsed
 
     rows = dev_results(sft_results, "sft")
-    if thinking:
-        if not base_results:
-            raise ValueError("Thinking GRPO needs the matching base development results.")
-        dev_results(base_results, "base")
     result = grpo.remote(mean(r["reward"] for r in rows if r["budget"] is not None),
                          mean(r["value"] for r in rows if r["budget"] == 60), thinking)
     Path(output).write_text("".join(json.dumps(row) + "\n" for row in result["rows"]))
-    print(f"GRPO step {result['step']}; rejected by reward check: {result['stopped']}")
+    print(f"GRPO step {result['step']}; selected step: {result.get('selected_step')}; stopped: {result['stopped']}")

@@ -4,6 +4,7 @@ from time import monotonic
 
 import modal
 
+from time_gym.qwen_eval import MODELS, SIZE_ADAPTERS
 from time_gym.qwen_sft import CAUSAL_CONV, FLA
 
 app = modal.App("time-gym-qwen-sft")
@@ -36,18 +37,23 @@ def check_thinking_image():
 
 @app.function(image=thinking_image, gpu="H100", cpu=4, memory=24576, timeout=6200, startup_timeout=360,
               retries=0, scaledown_window=2, max_containers=1, volumes={"/cache": cache})
-def train_thinking():
-    return _train("H100", THINKING_ADAPTER, thinking=True)
+def train_thinking(size: str = ""):
+    if not size:
+        return _train("H100", THINKING_ADAPTER, thinking=True, model=MODELS["4b"])
+    if size not in SIZE_ADAPTERS:
+        raise ValueError("Use size 4b or 9b for a corrected-teacher adapter.")
+    return _train("H100", SIZE_ADAPTERS[size], thinking=True, model=MODELS[size])
 
 
-def _train(gpu, adapter, *, thinking):
+def _train(gpu, adapter, *, thinking, model=None):
+    name, revision = model or (MODEL, REVISION)
     from datasets import Dataset
     from peft import LoraConfig
     import torch
     from transformers import AutoTokenizer, Qwen3_5ForConditionalGeneration
     from trl import SFTConfig, SFTTrainer
 
-    from time_gym.qwen_eval import MODEL, REVISION
+    from time_gym.qwen_eval import MODEL, MODELS, REVISION, SIZE_ADAPTERS
     from time_gym.qwen_sft import tokenized_examples
 
     start = monotonic()
@@ -57,14 +63,14 @@ def _train(gpu, adapter, *, thinking):
 
             if not is_fast_path_available:
                 raise RuntimeError("Qwen is missing its fast training kernels on GPU.")
-        tokenizer = AutoTokenizer.from_pretrained(MODEL, revision=REVISION)
+        tokenizer = AutoTokenizer.from_pretrained(name, revision=revision)
         data = Dataset.from_list(list(tokenized_examples(tokenizer, thinking=thinking)))
         longest = max(map(len, data["input_ids"]))
         if longest > 8192:
             raise ValueError(f"SFT context exceeds evaluation limit: {longest}")
         print(f"SFT examples: {len(data)}; longest: {longest} tokens", flush=True)
-        model = Qwen3_5ForConditionalGeneration.from_pretrained(MODEL, revision=REVISION, dtype=torch.bfloat16)
-        model.config.use_cache = False
+        loaded = Qwen3_5ForConditionalGeneration.from_pretrained(name, revision=revision, dtype=torch.bfloat16)
+        loaded.config.use_cache = False
         config = SFTConfig(output_dir="/tmp/time-gym-sft", max_steps=-1 if thinking else 240,
                            num_train_epochs=2, per_device_train_batch_size=1,
                            gradient_accumulation_steps=8 if thinking else 1,
@@ -73,7 +79,7 @@ def _train(gpu, adapter, *, thinking):
                            gradient_checkpointing_kwargs={"use_reentrant": False},
                            dataset_kwargs={"skip_prepare_dataset": True}, completion_only_loss=True,
                            logging_steps=20, save_strategy="no", report_to="none", seed=41)
-        trainer = SFTTrainer(model=model, args=config, train_dataset=data, processing_class=tokenizer,
+        trainer = SFTTrainer(model=loaded, args=config, train_dataset=data, processing_class=tokenizer,
                              peft_config=LoraConfig(r=16 if thinking else 8, lora_alpha=32 if thinking else 16,
                                                     task_type="CAUSAL_LM",
                                                     target_modules="all-linear" if thinking else ["q_proj", "v_proj"]))

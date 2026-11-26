@@ -2,17 +2,16 @@
 
 import json
 
-from time_gym.cases import DEV_FAMILIES, HELD_OUT_FAMILIES, generate
+from time_gym.cases import DEV_FAMILIES, FRESH_SEEDS, HELD_OUT_FAMILIES, generate
 from time_gym.policies import forecast, run_policy
-from time_gym.qwen_eval import DEV_EVAL_SEEDS, MODELS, SAMPLE_SEEDS, THINKING_TEMPERATURE
+from time_gym.qwen_eval import DEV_EVAL_SEEDS, MODELS, SAMPLE_SEEDS, SIZE_ADAPTERS, THINKING_TEMPERATURE
 from time_gym.qwen_intervals import paired_intervals
 from time_gym.qwen_sft import fair_examples
 from time_gym.report import ReportEpisode
 from time_gym.report_baseline import matrix
 
-# Seeds 80-99 check the forecast. Seeds 200-211 are reserved for a later frozen test.
+# Seeds 80-99 check the forecast. Fresh seeds live in cases.py so eval uses the same list.
 CHECK_SEEDS = range(80, 100)
-FRESH_SEEDS = range(200, 212)
 SETTINGS = {
     "thinking": True,
     "temperature": THINKING_TEMPERATURE,
@@ -54,9 +53,17 @@ def compare_forecasts():
     }
 
 
+def arm(size, role):
+    if size not in MODELS or role not in ("base", "sft"):
+        raise ValueError("Use size 4b or 9b and role base or sft.")
+    model, revision = MODELS[size]
+    adapter = "" if role == "base" else SIZE_ADAPTERS[size]
+    return {"size": size, "role": role, "model": model, "revision": revision, "adapter": adapter,
+            "split": "fresh", "seeds": FRESH_SEEDS, **SETTINGS}
+
+
 def arms():
-    return [{"size": size, "model": model, "revision": revision, "role": role, **SETTINGS}
-            for size, (model, revision) in MODELS.items() for role in ("base", "sft")]
+    return [arm(size, role) for size in MODELS for role in ("base", "sft")]
 
 
 def mock_scores(size, role):
