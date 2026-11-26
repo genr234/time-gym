@@ -78,10 +78,47 @@ def paired_intervals(before, after, fair, oracle, *, draws=20_000, seed=41, incl
     return dict(zip(names, zip(point.tolist(), low.tolist(), high.tolist())))
 
 
+def value_gap(before, after, *, draws=20_000, seed=41):
+    """Paired 60-minute value gap. Resample whole cases. Reject incomplete pairs."""
+    def index(rows):
+        result = {}
+        for row in rows:
+            if row.get("budget") != 60:
+                raise ValueError("Use only 60-minute rows.")
+            key = row["family"], row["seed"], row["sample_seed"]
+            if key in result:
+                raise ValueError(f"Duplicate episode: {key}")
+            result[key] = row
+        return result
+
+    left, right = index(before), index(after)
+    if not left or left.keys() != right.keys():
+        raise ValueError("Need the same complete case and sample pairs.")
+    cases = sorted({key[:2] for key in left})
+    samples = sorted({key[2] for key in left})
+    if any(len([key for key in left if key[:2] == case]) != len(samples) for case in cases):
+        raise ValueError("Every case needs the same sample seeds.")
+    gaps = np.array([np.mean([right[(*case, sample)]["value"] - left[(*case, sample)]["value"] for sample in samples])
+                     for case in cases])
+    draws = np.random.default_rng(seed).choice(len(cases), size=(draws, len(cases)), replace=True)
+    point = float(gaps.mean())
+    low, high = np.quantile(gaps[draws].mean(axis=1), [0.025, 0.975])
+    paired = [right[key]["value"] - left[key]["value"] for key in sorted(left)]
+    return {
+        "value_gap": (point, float(low), float(high)),
+        "wins": sum(gap > 0 for gap in paired),
+        "ties": sum(gap == 0 for gap in paired),
+        "losses": sum(gap < 0 for gap in paired),
+        "parse_failures": {name: sum(row["outcome"] == "unparseable_output" for row in rows)
+                           for name, rows in (("before", before), ("after", after))},
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("split", choices=("dev", "held-out"))
     parser.add_argument("--include-traces", action="store_true", help="Include ETA and re-read intervals.")
+    parser.add_argument("--value-gap", action="store_true", help="Report a 60-minute paired value gap.")
     parser.add_argument("traces", nargs="+", type=Path, help="Base, SFT, and optionally GRPO JSONL, in that order.")
     args = parser.parse_args()
     seeds = DEV_EVAL_SEEDS if args.split == "dev" else None
@@ -89,6 +126,11 @@ def main():
     fair, oracle = ([r for r in refs if r["policy"] == policy] for policy in ("fair", "oracle"))
     models = [[json.loads(line) for line in path.read_text().splitlines()] for path in args.traces]
     labels = ["base", "sft", "grpo"][:len(models)]
+    if args.value_gap:
+        if len(models) != 2:
+            parser.error("The value gap needs the base file, then the tuned file.")
+        print(value_gap(models[0], models[1]))
+        return
     if len(models) not in (2, 3) or any(
         not rows or any(r["policy"] != label or r["split"] != args.split for r in rows)
         for rows, label in zip(models, labels)

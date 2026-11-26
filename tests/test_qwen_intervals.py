@@ -1,6 +1,6 @@
 import unittest
 
-from time_gym.qwen_intervals import paired_intervals
+from time_gym.qwen_intervals import paired_intervals, value_gap
 
 
 class QwenIntervalTests(unittest.TestCase):
@@ -36,3 +36,15 @@ class QwenIntervalTests(unittest.TestCase):
         self.assertEqual(result["eta_completion_pp"], (50, 50, 50))
         self.assertEqual(result["eta_coverage_all_pp"], (50, 50, 50))
         self.assertEqual(result["reread_minutes_per_episode"], (1.5, 1.5, 1.5))
+
+    def test_value_gap_resamples_cases_and_rejects_a_missing_pair(self):
+        def rows(shift):
+            return [{"family": "detour", "seed": seed, "sample_seed": sample, "budget": 60,
+                     "value": seed + shift, "outcome": "finished"}
+                    for seed in (200, 201) for sample in (41, 42)]
+
+        gap = value_gap(rows(0), rows(2), draws=50)
+        self.assertEqual(gap["value_gap"], (2, 2, 2))
+        self.assertEqual((gap["wins"], gap["ties"], gap["losses"], gap["parse_failures"]), (4, 0, 0, {"before": 0, "after": 0}))
+        with self.assertRaisesRegex(ValueError, "complete case"):
+            value_gap(rows(0)[:-1], rows(2))

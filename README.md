@@ -321,9 +321,19 @@ Do not run the six-job plan. It is above the cap.
 The smaller pilot does not train. It compares two checkpoints that already exist: tuned 4B at `/cache/time-gym-sft-v2-text`, trained before the ETA teacher fix, and untuned 9B at revision `c202236235762e1c871ad0ccb60c8ee5ba337b9a`. Both use detour seeds 200–211, sample seeds 41 and 42, a 60-minute budget, thinking on, temperature 0.6, a 1,024-token limit, and no guided JSON. The gap is between these two deployments. It is not a pure size effect and not a test of the ETA fix.
 
 ```sh
-uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py::main --thinking --size 9b --split fresh --budget 60 --output qwen-9b-smoke.jsonl
+uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py::main --smoke --size 9b --output qwen-9b-smoke.jsonl
 uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py::main --thinking --size 4b --split fresh --budget 60 --adapter /cache/time-gym-sft-v2-text --output qwen-4b-sft-v2-fresh-60.jsonl
 uvx --with-editable . --from modal==1.6.4 modal run modal_time_gym.py::main --thinking --size 9b --split fresh --budget 60 --output qwen-9b-base-fresh-60.jsonl
 ```
 
-The first command is the smoke check. Stop it after one completed episode if 9B loads. The decorator is L40S, timeout 1,500 seconds, startup timeout 360 seconds, and retries 0. At $1.95 per hour, one job reserves about $1.01. Three jobs reserve about $3.03. Modal billed **$17.27** of project GPU spend after GRPO stopped, not the earlier $11.34. $17.27 plus $3.03 is $20.30, under $25, with about $4.70 left. Do not add another job without a new bill check. This checkout has not loaded 9B on a GPU.
+The smoke command exits after one episode. That episode is development seed 0, family corroborate, sample 41, at 15 minutes. It is not a fresh-split episode. The function writes the file only after that one episode returns. The two later commands still run all 24 fresh episodes at 60 minutes.
+
+After both full files exist, report the paired gap locally:
+
+```sh
+uv run --locked python -m time_gym.qwen_intervals fresh --value-gap qwen-9b-base-fresh-60.jsonl qwen-4b-sft-v2-fresh-60.jsonl
+```
+
+The first file is base 9B. The second is tuned 4B. The command rejects a missing or duplicate pair. It reports tuned 4B minus base 9B, a 95% interval from resampling whole cases, wins, ties, losses, and parse failures.
+
+Each of the three commands uses the same L40S decorator: timeout 1,500 seconds, startup timeout 360 seconds, retries 0. At $1.95 per hour, one job reserves (1,500 + 360) / 3,600 × $1.95 = $1.01. Three jobs reserve $3.03. Modal billed **$17.27** of project GPU spend after GRPO stopped. $17.27 plus $3.03 is $20.30, under $25, with about $4.70 left. Recheck the bill before launch. This checkout has not loaded 9B on a GPU.
