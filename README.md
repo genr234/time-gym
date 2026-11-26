@@ -272,3 +272,37 @@ The [SFT evaluation](https://modal.com/apps/genr234/main/ap-ieAGOduusHpclQiExYkO
 | Re-read minutes per episode | 0 [0, 0] |
 
 On the matched development run, SFT-v2 reduced unsupported findings from 5 to 0 and unused useful minutes from 1,358 to 20. The zero-width intervals describe the observed cases, not certainty about new cases. SFT improved end-to-end performance, but the base parse failures prevent us from separating protocol skill from time skill. Fix the base protocol on development cases before spending on GRPO. There are no new held-out results or transfer claims.
+
+### ETA teacher and matched size comparison
+
+The old fair forecast counted one read per stage plus a stage-1 reserve. A detour can waste the first gated path, so the interval ended early. The new forecast uses only the catalog. When two gated records share a stage, it adds one extra upper-bound read. It does not use hidden costs or that example's own completion time.
+
+| Split | Coverage | Mean width (min) | Mean interval loss |
+| --- | ---: | ---: | ---: |
+| Detour seeds 20–79, old forecast | 0.23 | 34.9 | 157.7 |
+| Detour seeds 20–79, recovery forecast | 0.97 | 66.7 | 67.4 |
+| Detour seeds 80–99, not used to write the rule | 0.10 → 1.00 | 34.9 → 66.4 | 187.4 → 66.4 |
+| Other families, seeds 80–99 | 0.97 → 0.97 | 35.6 → 35.6 | 36.5 → 36.5 |
+
+Frozen branch seeds 100–111 were not used to choose the rule. Their old results stay as published. A later transfer test should use a fresh family, seeds 200–211, after the models are trained.
+
+The next comparison has four arms. Both sizes use the same cases, scorer, budgets, prompt, temperature 0.6, 1,024-token limit, and no guided JSON. SFT uses the same corrected fair traces.
+
+| Arm | Model | Revision |
+| --- | --- | --- |
+| 4B base | Qwen/Qwen3.5-4B | `851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a` |
+| 4B SFT | same | same |
+| 9B base | Qwen/Qwen3.5-9B | `c202236235762e1c871ad0ccb60c8ee5ba337b9a` |
+| 9B SFT | same | same |
+
+Both configs name `Qwen3_5ForConditionalGeneration` and the same thinking chat template. The 9B text hidden size is 4,096 and it has 32 layers. vLLM 0.19.0 already ran the 4B class. The 9B class is the same name, but this checkout has not loaded 9B on a GPU. Do not treat that as a compatibility proof.
+
+Report the 60-minute value difference for tuned 4B minus base 9B, and each size's SFT minus base, paired by case. Keep ETA completion, coverage, width, and parse failures in separate columns.
+
+```sh
+uv run --locked python -m time_gym.size_compare
+```
+
+That command is local. It prints the forecast table and a mocked pairing. It does not call Modal.
+
+A later GPU job should stay under $7.50. At the H100 list rate of $3.95 per hour, a 6,000-second timeout plus 360 seconds of startup is about $6.98. One 9B evaluation is larger than the 4B L40S run (339 seconds, $0.17). Budget three H100 jobs: one 9B SFT and two evaluations. Three jobs at the $6.98 ceiling are $20.94, which would pass the $25 project cap if added to the current $11.34. Stop before launch if billed spend plus that ceiling exceeds $25. No GPU compatibility claim is included.

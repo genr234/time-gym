@@ -66,7 +66,7 @@ def visible_work(brief, step, *, budget=None, random=None):
 
 
 def forecast(brief):
-    """Catalog-only forecast. Allow some time for a reserve lookup."""
+    """Catalog-only forecast. Allow a reserve lookup and one failed gated path."""
     low = high = 1
     for topic in brief["topics"]:
         first = lookup(topic, {})[0]
@@ -76,6 +76,12 @@ def forecast(brief):
             ranges = [s["read_minutes"] for s in topic["sources"] if s["stage"] == stage]
             low += min(a for a, _ in ranges)
             high += max(b for _, b in ranges)
+        # Two gated records at one stage means the cheaper link can be a dead end.
+        # The catalog shows the choice, not which path works, so allow one extra read.
+        gated = [s for s in topic["sources"] if s["link_required"]]
+        stages = {s["stage"] for s in gated}
+        if any(sum(s["stage"] == stage for s in gated) >= 2 for stage in stages):
+            high += max(s["read_minutes"][1] for s in gated)
     reserve = max(s["read_minutes"][1] for t in brief["topics"] for s in t["sources"] if s["stage"] == 1)
     return low, high + 2 * reserve
 

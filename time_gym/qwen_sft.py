@@ -27,7 +27,8 @@ def _decision_note(episode, action):
             return (f"{time} Read {source.id}, stage {source.stage}. The topic is worth {topic.weight}; "
                     f"this read costs at most {source.bounds[1]} minutes.")
         case "estimate":
-            return f"Estimate {args['low']} to {args['high']} minutes from the catalog ranges, including the save and reserve reads."
+            return (f"Estimate {args['low']} to {args['high']} minutes from the catalog ranges. "
+                    "Include the save, a reserve lookup, and one extra read when two gated records share a stage.")
         case "save_draft":
             return f"{time} Save {len(args['findings'])} complete findings with the records already read."
         case _:

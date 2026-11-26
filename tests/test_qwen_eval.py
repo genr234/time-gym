@@ -4,7 +4,8 @@ import unittest
 
 from time_gym.cases import generate
 from time_gym.policies import run_policy
-from time_gym.qwen_eval import PROGRESS_EVAL_SEEDS, act, action_schema, evaluate, initial_chat
+from time_gym.qwen_eval import MODELS, PROGRESS_EVAL_SEEDS, act, action_schema, evaluate, initial_chat
+from time_gym.size_compare import arms, mock_scores
 from time_gym.qwen_grpo import advantages, rollout_group, training_tasks
 from time_gym.qwen_sft import fair_examples
 from time_gym.report import ReportEpisode
@@ -57,6 +58,11 @@ class QwenEvaluationTests(unittest.TestCase):
         examples = list(fair_examples(thinking=True))
         self.assertTrue(2000 <= len(examples) <= 3000)
         self.assertTrue(any(" archived" in note and " opens " in note for _, note in examples))
+        estimates = [json.loads(text.split("</think>", 1)[1]) for _, text in examples if '"estimate"' in text]
+        self.assertTrue(estimates)
+        self.assertTrue(all(item["args"]["high"] > item["args"]["low"] for item in estimates))
+        self.assertEqual({arm["model"] for arm in arms()}, {model for model, _ in MODELS.values()})
+        self.assertEqual(len(mock_scores("4b", "sft")), len(mock_scores("9b", "base")))
 
     def test_action_schema_pairs_each_allowed_tool_with_its_arguments(self):
         for eta in (False, True):

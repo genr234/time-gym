@@ -153,6 +153,8 @@ class ReportTests(unittest.TestCase):
                 self.assertEqual((row["eta_actual"], row["eta_covered"], row["eta_reference_covered"]), (180, True, False))
             if row["task"] == "eta" and name == "fair":
                 self.assertEqual(row["eta_actual"], row["eta_reference"])
+                if row["family"] == "branch":
+                    self.assertTrue(row["eta_reference_covered"])
 
     def test_gym_seed_and_terminal_reward(self):
         env = ReportEnv(budget=15)
